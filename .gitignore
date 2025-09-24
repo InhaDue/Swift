@@ -1,0 +1,10 @@
+secrets/
+*.p8
+build/
+*.xcarchive
+*.ipa
+*.xcresult
+DerivedData/
+build/export/AppStoreInfo.plist
+build/ExportOptions.plist
+build/**/Info.plist
