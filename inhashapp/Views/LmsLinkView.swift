@@ -24,7 +24,7 @@ struct LmsLinkView: View {
                             .overlay(Image(systemName: "chevron.left").foregroundColor(.secondary))
                             .frame(width: 28, height: 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("LMS 연결").font(.title3).fontWeight(.semibold)
+                            Text("LMS2 연결").font(.title3).fontWeight(.semibold)
                             Text("인하대 LMS 계정을 연결해주세요").font(.footnote).foregroundColor(.secondary)
                         }
                         Spacer()
