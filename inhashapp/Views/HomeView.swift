@@ -19,7 +19,6 @@ struct HomeView: View {
             AppBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
-                    HomeHeader()
                     
                     SectionHeader(title: "다가오는 일정")
                     FilterBar(selected: $selectedFilter)
@@ -74,24 +73,6 @@ private enum ScheduleFilter: CaseIterable {
         case .assignment: return "과제"
         case .lecture: return "수업"
         }
-    }
-}
-
-private struct HomeHeader: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Text("안녕하세요! 👋")
-                    .font(.system(size: 22, weight: .heavy))
-                    .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing))
-                Spacer(minLength: 0)
-            }
-            Text("다가오는 일정을 확인해보세요")
-                .font(.callout)
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 4)
-        .padding(.top, 10)
     }
 }
 

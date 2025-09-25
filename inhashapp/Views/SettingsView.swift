@@ -16,7 +16,8 @@ struct SettingsView: View {
                     Toggle("수업 알림", isOn: $notifyLectures)
                     Toggle("전체 알림", isOn: $notifyAll)
                         .onChange(of: notifyAll) { newValue in
-                            if newValue == false { notifyAssignments = false; notifyLectures = false }
+                            notifyAssignments = newValue
+                            notifyLectures = newValue
                         }
                     Picker("사전 알림(D-일)", selection: $ddayOption) { ForEach(ddayOptions, id: \.self) { d in Text("D-\(d)").tag(d) } }
                     Text("사전 알림은 매일 09:00시에 울립니다. 예: 과제 마감이 9월 25일인 경우, D-2로 설정하면 9월 23일 09:00에 알림이 울립니다.")
