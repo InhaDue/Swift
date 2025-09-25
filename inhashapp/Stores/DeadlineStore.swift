@@ -1,155 +1,184 @@
 import Foundation
 import Combine
 
+// AssignmentItem 정의
+struct AssignmentItem: Identifiable, Codable, Hashable {
+    let id: String
+    let type: String // "assignment" or "lecture"
+    let courseName: String
+    let title: String
+    let url: String?
+    let dueAt: Date
+}
+
 class DeadlineStore: ObservableObject {
-    static let shared = DeadlineStore()
-    
-    @Published var assignments: [Assignment] = []
-    @Published var lectures: [Lecture] = []
-    @Published var allItems: [DeadlineItem] = []
-    @Published var isLoading = false
-    @Published var errorMessage: String?
-    
+    @Published var allDeadlines: [AssignmentItem] = []
+    @Published var todayDeadlines: [AssignmentItem] = []
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String? = nil
+
     private var cancellables = Set<AnyCancellable>()
-    
-    private init() {
-        // 초기화 시 데이터 로드
-        Task {
-            await fetchDeadlines()
-        }
+
+    init() {
+        // 초기화 시 데이터 로드는 View에서 처리
     }
     
-    /// 서버에서 과제/수업 데이터 가져오기
-    @MainActor
-    func fetchDeadlines() async {
-        isLoading = true
-        errorMessage = nil
+    private func parseItem(_ item: [String: Any], type: String) -> AssignmentItem? {
+        guard let id = item["id"] as? String,
+              let courseName = item["courseName"] as? String,
+              let title = item["title"] as? String else { return nil }
         
-        guard let studentId = UserDefaults.standard.object(forKey: "studentId") as? Int else {
-            errorMessage = "학생 ID를 찾을 수 없습니다"
-            isLoading = false
-            return
-        }
+        let url = item["url"] as? String
         
-        // API 엔드포인트 (백엔드에 추가 필요)
-        guard let url = URL(string: "\(AppConfig.API.deadlines)/\(studentId)") else {
-            errorMessage = "잘못된 URL"
-            isLoading = false
-            return
-        }
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+        // Date 파싱 - 다양한 형식 지원
+        var dueAt: Date?
+        if let dueAtString = item["dueAt"] as? String {
+            // ISO 8601 형식 시도
+            let isoFormatter = ISO8601DateFormatter()
+            dueAt = isoFormatter.date(from: dueAtString)
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                // 데이터가 없는 경우 빈 배열 유지
-                isLoading = false
+            // ISO 8601 실패 시 커스텀 형식 시도
+            if dueAt == nil {
+                let customFormatter = DateFormatter()
+                customFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+                customFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+                dueAt = customFormatter.date(from: dueAtString)
+            }
+        } else if let dueAtTimeInterval = item["dueAt"] as? Double {
+            dueAt = Date(timeIntervalSince1970: dueAtTimeInterval / 1000)
+        }
+        
+        guard let finalDueAt = dueAt else { return nil }
+        
+        return AssignmentItem(
+            id: id,
+            type: type,
+            courseName: courseName,
+            title: title,
+            url: url,
+            dueAt: finalDueAt
+        )
+    }
+
+    func fetchAllDeadlines(studentId: Int, token: String) async {
+        await MainActor.run {
+            self.isLoading = true
+            self.errorMessage = nil
+        }
+
+        guard let url = URL(string: "\(AppConfig.API.deadlines)/\(studentId)") else {
+            await MainActor.run {
+                self.errorMessage = "Invalid URL for all deadlines."
+                self.isLoading = false
+            }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                await MainActor.run {
+                    self.errorMessage = "Failed to fetch all deadlines: \(statusCode) - \(errorBody)"
+                    self.isLoading = false
+                }
                 return
             }
-            
-            let decoder = JSONDecoder()
-            let deadlineResponse = try decoder.decode(AssignmentResponse.self, from: data)
-            
-            if deadlineResponse.success {
-                self.assignments = deadlineResponse.assignments ?? []
-                self.lectures = deadlineResponse.lectures ?? []
-                updateAllItems()
+
+            // JSON 파싱 - assignments와 lectures 배열 처리
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                var items: [AssignmentItem] = []
+                
+                // assignments 처리
+                if let assignmentsArray = json["assignments"] as? [[String: Any]] {
+                    items.append(contentsOf: assignmentsArray.compactMap { parseItem($0, type: "assignment") })
+                }
+                
+                // lectures 처리
+                if let lecturesArray = json["lectures"] as? [[String: Any]] {
+                    items.append(contentsOf: lecturesArray.compactMap { parseItem($0, type: "lecture") })
+                }
+                
+                await MainActor.run {
+                    self.allDeadlines = items.sorted { $0.dueAt < $1.dueAt }
+                    self.isLoading = false
+                }
             } else {
-                errorMessage = deadlineResponse.error ?? "데이터 로드 실패"
+                await MainActor.run {
+                    self.errorMessage = "Failed to parse deadlines data"
+                    self.isLoading = false
+                }
             }
-            
         } catch {
-            print("Fetch deadlines error: \(error)")
-            // 에러가 나도 빈 배열 유지 (앱이 크래시하지 않도록)
-            errorMessage = nil
-        }
-        
-        isLoading = false
-    }
-    
-    /// 모든 아이템 업데이트 (과제 + 수업)
-    private func updateAllItems() {
-        var items: [DeadlineItem] = []
-        
-        // 과제 추가
-        items.append(contentsOf: assignments.map { .assignment($0) })
-        
-        // 수업 추가
-        items.append(contentsOf: lectures.map { .lecture($0) })
-        
-        // 날짜순 정렬 (가장 가까운 마감일이 먼저)
-        items.sort { item1, item2 in
-            guard let date1 = item1.dueDate else { return false }
-            guard let date2 = item2.dueDate else { return true }
-            return date1 < date2
-        }
-        
-        allItems = items
-    }
-    
-    /// 오늘 마감인 아이템들
-    var todayDeadlines: [DeadlineItem] {
-        let calendar = Calendar.current
-        let today = Date()
-        
-        return allItems.filter { item in
-            guard let dueDate = item.dueDate else { return false }
-            return calendar.isDateInToday(dueDate)
-        }
-    }
-    
-    /// 이번 주 마감인 아이템들
-    var thisWeekDeadlines: [DeadlineItem] {
-        let calendar = Calendar.current
-        let today = Date()
-        guard let weekEnd = calendar.date(byAdding: .day, value: 7, to: today) else { return [] }
-        
-        return allItems.filter { item in
-            guard let dueDate = item.dueDate else { return false }
-            return dueDate >= today && dueDate <= weekEnd && !item.isOverdue
-        }
-    }
-    
-    /// 다가오는 마감 (7일 이내)
-    var upcomingDeadlines: [DeadlineItem] {
-        let calendar = Calendar.current
-        let today = Date()
-        guard let weekEnd = calendar.date(byAdding: .day, value: 7, to: today) else { return [] }
-        
-        return allItems.filter { item in
-            guard let dueDate = item.dueDate else { return false }
-            return dueDate >= today && dueDate <= weekEnd
-        }.prefix(5).map { $0 } // 최대 5개만
-    }
-    
-    /// 특정 날짜의 아이템들
-    func deadlines(for date: Date) -> [DeadlineItem] {
-        let calendar = Calendar.current
-        
-        return allItems.filter { item in
-            guard let dueDate = item.dueDate else { return false }
-            return calendar.isDate(dueDate, inSameDayAs: date)
-        }
-    }
-    
-    /// 과제만 필터링
-    var assignmentsOnly: [Assignment] {
-        return assignments.filter { !$0.isOverdue }
-            .sorted { item1, item2 in
-                guard let date1 = item1.dueDate else { return false }
-                guard let date2 = item2.dueDate else { return true }
-                return date1 < date2
+            await MainActor.run {
+                self.errorMessage = "Network error fetching all deadlines: \(error.localizedDescription)"
+                self.isLoading = false
             }
+        }
     }
-    
-    /// 수업만 필터링
-    var lecturesOnly: [Lecture] {
-        return lectures.filter { !$0.isOverdue }
-            .sorted { item1, item2 in
-                guard let date1 = item1.dueDate else { return false }
-                guard let date2 = item2.dueDate else { return true }
-                return date1 < date2
+
+    func fetchTodayDeadlines(studentId: Int, token: String) async {
+        await MainActor.run {
+            self.isLoading = true
+            self.errorMessage = nil
+        }
+
+        guard let url = URL(string: "\(AppConfig.API.deadlines)/\(studentId)/today") else {
+            await MainActor.run {
+                self.errorMessage = "Invalid URL for today's deadlines."
+                self.isLoading = false
             }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                await MainActor.run {
+                    self.errorMessage = "Failed to fetch today's deadlines: \(statusCode) - \(errorBody)"
+                    self.isLoading = false
+                }
+                return
+            }
+
+            // JSON 파싱 - assignments와 lectures 배열 처리
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                var items: [AssignmentItem] = []
+                
+                // assignments 처리
+                if let assignmentsArray = json["assignments"] as? [[String: Any]] {
+                    items.append(contentsOf: assignmentsArray.compactMap { parseItem($0, type: "assignment") })
+                }
+                
+                // lectures 처리
+                if let lecturesArray = json["lectures"] as? [[String: Any]] {
+                    items.append(contentsOf: lecturesArray.compactMap { parseItem($0, type: "lecture") })
+                }
+                
+                await MainActor.run {
+                    self.todayDeadlines = items.sorted { $0.dueAt < $1.dueAt }
+                    self.isLoading = false
+                }
+            } else {
+                await MainActor.run {
+                    self.errorMessage = "Failed to parse today's deadlines data"
+                    self.isLoading = false
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Network error fetching today's deadlines: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+        }
     }
 }

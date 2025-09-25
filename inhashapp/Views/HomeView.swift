@@ -1,75 +1,92 @@
 import SwiftUI
 
 struct HomeView: View {
-    @StateObject private var deadlineStore = DeadlineStore.shared
+    @EnvironmentObject private var auth: AuthStore
+    @StateObject private var deadlineStore = DeadlineStore()
     @State private var selectedFilter: ScheduleFilter = .all
-    
-    private var filteredItems: [DeadlineItem] {
+
+    private var filteredItems: [AssignmentItem] {
+        let base = deadlineStore.allDeadlines.sorted { $0.dueAt < $1.dueAt }
         switch selectedFilter {
-        case .all:
-            return deadlineStore.thisWeekDeadlines
-        case .assignment:
-            return deadlineStore.thisWeekDeadlines.filter { $0.isAssignment }
-        case .lecture:
-            return deadlineStore.thisWeekDeadlines.filter { !$0.isAssignment }
+        case .all: return base
+        case .assignment: return base.filter { $0.type == "assignment" }
+        case .lecture: return base.filter { $0.type == "lecture" || $0.type == "class" }
         }
     }
-    
+
     var body: some View {
         ZStack {
             AppBackground()
-            
-            if deadlineStore.isLoading {
-                ProgressView("데이터 로딩 중...")
-                    .padding()
-                    .background(Color.white.opacity(0.9))
-                    .cornerRadius(12)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 16) {
-                        HomeHeader()
-                        
-                        // 오늘 마감
-                        if !deadlineStore.todayDeadlines.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                SectionHeader(title: "오늘 마감 ⚠️")
-                                ForEach(deadlineStore.todayDeadlines) { item in
-                                    DeadlineCard(item: item, isUrgent: true)
-                                }
-                            }
-                        }
-                        
-                        // 이번 주 일정
-                        VStack(alignment: .leading, spacing: 12) {
-                            SectionHeader(title: "이번 주 일정")
-                            FilterBar(selected: $selectedFilter)
-                            
-                            if filteredItems.isEmpty {
-                                EmptyStateView()
-                            } else {
-                                LazyVStack(spacing: 12) {
-                                    ForEach(filteredItems) { item in
-                                        DeadlineCard(item: item)
-                                    }
-                                }
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    HomeHeader()
+                    
+                    SectionHeader(title: "오늘의 일정")
+                    if deadlineStore.isLoading {
+                        ProgressView("로딩 중...")
+                            .padding()
+                    } else if let errorMessage = deadlineStore.errorMessage {
+                        Text("오류: \(errorMessage)")
+                            .foregroundColor(.red)
+                            .padding()
+                    } else if deadlineStore.todayDeadlines.isEmpty {
+                        Text("오늘 일정이 없습니다.")
+                            .foregroundColor(.secondary)
+                            .padding()
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(deadlineStore.todayDeadlines) { item in
+                                ScheduleCard(item: item)
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+
+                    SectionHeader(title: "다가오는 일정")
+                    FilterBar(selected: $selectedFilter)
+                    if deadlineStore.isLoading {
+                        ProgressView("로딩 중...")
+                            .padding()
+                    } else if let errorMessage = deadlineStore.errorMessage {
+                        Text("오류: \(errorMessage)")
+                            .foregroundColor(.red)
+                            .padding()
+                    } else if filteredItems.isEmpty {
+                        Text("다가오는 일정이 없습니다.")
+                            .foregroundColor(.secondary)
+                            .padding()
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(filteredItems) { item in
+                                ScheduleCard(item: item)
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .refreshable {
+                await fetchData()
             }
         }
-        .task {
-            await deadlineStore.fetchDeadlines()
+        .onAppear {
+            Task {
+                await fetchData()
+            }
         }
-        .refreshable {
-            await deadlineStore.fetchDeadlines()
+    }
+
+    private func fetchData() async {
+        guard let studentId = auth.studentId, let token = auth.token else {
+            deadlineStore.errorMessage = "로그인 정보가 없습니다."
+            return
         }
+        await deadlineStore.fetchTodayDeadlines(studentId: studentId, token: token)
+        await deadlineStore.fetchAllDeadlines(studentId: studentId, token: token)
     }
 }
 
-private enum ScheduleFilter: CaseIterable {
+private enum ScheduleFilter: CaseIterable { 
     case all, assignment, lecture
     
     var title: String {
@@ -94,31 +111,35 @@ private struct HomeHeader: View {
                 .font(.callout)
                 .foregroundColor(.secondary)
         }
-        .padding(.top, 8)
+        .padding(.horizontal, 4)
+        .padding(.top, 10)
     }
 }
 
 private struct SectionHeader: View {
     let title: String
     var body: some View {
-        Text(title)
-            .font(.system(size: 18, weight: .bold))
-            .foregroundColor(.primary)
+        HStack {
+            Text(title)
+                .font(.title2)
+                .fontWeight(.bold)
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 10)
     }
 }
 
 private struct FilterBar: View {
     @Binding var selected: ScheduleFilter
-    
     var body: some View {
         HStack(spacing: 8) {
             ForEach(ScheduleFilter.allCases, id: \.self) { filter in
-                FilterChip(
-                    title: filter.title,
-                    isSelected: selected == filter,
-                    action: { selected = filter }
-                )
+                FilterChip(title: filter.title, isSelected: selected == filter) {
+                    selected = filter
+                }
             }
+            Spacer()
         }
     }
 }
@@ -131,114 +152,81 @@ private struct FilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(isSelected ? .white : .secondary)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(isSelected ? .white : .primary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(isSelected ? Color.blue : Color.gray.opacity(0.1))
+                    Capsule()
+                        .fill(isSelected ? Color.blue : Color(.systemGray5))
                 )
         }
     }
 }
 
-private struct DeadlineCard: View {
-    let item: DeadlineItem
-    var isUrgent: Bool = false
+private struct ScheduleCard: View {
+    let item: AssignmentItem
+    
+    private var timeRemaining: String {
+        let now = Date()
+        let diff = item.dueAt.timeIntervalSince(now)
+        
+        if diff < 0 {
+            return "지남"
+        } else if diff < 3600 {
+            return "\(Int(diff/60))분 남음"
+        } else if diff < 86400 {
+            return "\(Int(diff/3600))시간 남음"
+        } else {
+            return "\(Int(diff/86400))일 남음"
+        }
+    }
+    
+    private var isUrgent: Bool {
+        item.dueAt.timeIntervalSince(Date()) < 86400
+    }
     
     var body: some View {
         HStack(spacing: 12) {
-            // 아이콘
             Circle()
-                .fill(item.isAssignment ? Color.blue.opacity(0.1) : Color.green.opacity(0.1))
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: item.isAssignment ? "doc.text" : "play.circle")
-                        .foregroundColor(item.isAssignment ? .blue : .green)
-                )
+                .fill(item.type == "assignment" ? Color.orange : Color.blue)
+                .frame(width: 10, height: 10)
             
-            // 내용
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.primary)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 
-                HStack(spacing: 8) {
-                    Text(item.courseName)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if let _ = item.dueDate {
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text(item.formattedDueDate)
-                            .font(.caption)
-                            .foregroundColor(isUrgent ? .red : .secondary)
-                    }
-                }
+                Text(item.courseName)
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
             }
             
             Spacer()
             
-            // 남은 시간
-            if let dueDate = item.dueDate {
-                let days = Calendar.current.dateComponents([.day], from: Date(), to: dueDate).day ?? 0
-                VStack(spacing: 2) {
-                    if days == 0 {
-                        Text("오늘")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.red)
-                    } else if days > 0 {
-                        Text("D-\(days)")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(days <= 3 ? .orange : .blue)
-                    }
-                }
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(timeRemaining)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isUrgent ? .red : .secondary)
+                
+                Text(formatDate(item.dueAt))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             }
         }
-        .padding(12)
+        .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white)
-                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isUrgent ? Color.red.opacity(0.3) : Color.clear, lineWidth: 1)
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
         )
     }
-}
-
-private struct EmptyStateView: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 48))
-                .foregroundColor(.green)
-            
-            Text("이번 주 일정이 없습니다")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            
-            Text("잠시 휴식을 취해보세요 ☕️")
-                .font(.caption)
-                .foregroundColor(.secondary.opacity(0.7))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.gray.opacity(0.05))
-        )
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "M/d HH:mm"
+        return formatter.string(from: date)
     }
-}
-
-#Preview {
-    HomeView()
 }
