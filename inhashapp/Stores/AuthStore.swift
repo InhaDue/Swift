@@ -135,4 +135,35 @@ final class AuthStore: ObservableObject {
     func setLmsLinked(_ linked: Bool) {
         storedLmsLinked = linked
     }
+    
+    // 크롤링 데이터 제출
+    func submitCrawlData(studentId: Int, crawlData: LMSWebCrawler.CrawlData) async -> Bool {
+        guard let url = URL(string: "\(AppConfig.baseURL)/api/crawl/submit/\(studentId)") else {
+            return false
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(storedToken ?? "")", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let encoder = JSONEncoder()
+            request.httpBody = try encoder.encode(crawlData)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200 {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let success = json["success"] as? Bool, success {
+                    return true
+                }
+            }
+        } catch {
+            print("Failed to submit crawl data: \(error)")
+        }
+        
+        return false
+    }
 }
