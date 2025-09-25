@@ -17,6 +17,7 @@ struct AppConfig {
         static let registerFCM = "\(baseURL)/api/fcm/register"
         static let login = "\(baseURL)/api/auth/login"
         static let signup = "\(baseURL)/api/auth/signup"
+        static let deadlines = "\(baseURL)/api/deadlines"
     }
     
     // 기타 설정

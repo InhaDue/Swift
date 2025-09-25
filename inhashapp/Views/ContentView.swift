@@ -8,10 +8,13 @@ struct ContentView: View {
     var body: some View {
         Group {
             if !auth.isAuthenticated {
+                // 로그인/회원가입 화면
                 AuthFlowView()
             } else if !auth.isLmsLinked {
-                LmsLinkView()
+                // 회원가입 후에만 LMS 연결 필요 (로그인 시에는 이미 연결되어 있음)
+                OnboardingFlow()
             } else {
+                // 메인 화면
                 MainTabs()
             }
         }

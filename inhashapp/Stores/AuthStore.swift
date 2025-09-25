@@ -4,6 +4,9 @@ import SwiftUI
 
 final class AuthStore: ObservableObject {
     @AppStorage("authToken") private var storedToken: String?
+    @AppStorage("studentId") private var storedStudentId: Int?
+    @AppStorage("userEmail") private var storedEmail: String?
+    @AppStorage("userName") private var storedName: String?
     @AppStorage("lmsLinked") private var storedLmsLinked: Bool = false
     
     @Published var isAuthenticated: Bool = false
@@ -11,6 +14,9 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
     
     var token: String? { storedToken }
+    var studentId: Int? { storedStudentId }
+    var email: String? { storedEmail }
+    var name: String? { storedName }
     var isLmsLinked: Bool { storedLmsLinked }
     
     init() {
@@ -19,48 +25,114 @@ final class AuthStore: ObservableObject {
     
     func login(email: String, password: String) async {
         await MainActor.run { self.errorMessage = nil }
-        // TODO: 실제 API 연동. 여기서는 성공 가정
-        try? await Task.sleep(nanoseconds: 600_000_000)
-        await MainActor.run {
-            self.storedToken = UUID().uuidString
-            self.isAuthenticated = true
-            // 테스트용 studentId 주입 (서버는 없으면 자동 생성)
-            if UserDefaults.standard.object(forKey: "studentId") == nil {
-                UserDefaults.standard.set(1, forKey: "studentId")
+        
+        guard let url = URL(string: AppConfig.API.login) else {
+            await MainActor.run { self.errorMessage = "잘못된 URL" }
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["email": email, "password": password]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool {
+                
+                if success {
+                    await MainActor.run {
+                        self.storedToken = json["token"] as? String
+                        self.storedStudentId = json["studentId"] as? Int
+                        self.storedEmail = json["email"] as? String
+                        self.storedName = json["name"] as? String
+                        self.storedLmsLinked = json["lmsLinked"] as? Bool ?? false
+                        self.isAuthenticated = true
+                    }
+                } else {
+                    await MainActor.run {
+                        self.errorMessage = json["error"] as? String ?? "로그인 실패"
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "네트워크 오류: \(error.localizedDescription)"
             }
         }
     }
     
-    func signup(email: String, password: String) async {
+    func signup(email: String, password: String, name: String) async {
         await MainActor.run { self.errorMessage = nil }
-        // TODO: 실제 API 연동. 여기서는 성공 가정
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        await MainActor.run {
-            self.storedToken = UUID().uuidString
-            self.isAuthenticated = true
-            // 테스트용 studentId 주입 (서버는 없으면 자동 생성)
-            if UserDefaults.standard.object(forKey: "studentId") == nil {
-                UserDefaults.standard.set(1, forKey: "studentId")
+        
+        guard let url = URL(string: AppConfig.API.signup) else {
+            await MainActor.run { self.errorMessage = "잘못된 URL" }
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["email": email, "password": password, "name": name]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool {
+                
+                if success {
+                    await MainActor.run {
+                        self.storedToken = json["token"] as? String
+                        self.storedStudentId = json["studentId"] as? Int
+                        self.storedEmail = json["email"] as? String
+                        self.storedName = json["name"] as? String
+                        self.storedLmsLinked = false // 회원가입 시 LMS 연결 필요
+                        self.isAuthenticated = true
+                    }
+                } else {
+                    await MainActor.run {
+                        self.errorMessage = json["error"] as? String ?? "회원가입 실패"
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "네트워크 오류: \(error.localizedDescription)"
             }
         }
     }
     
     func logout() {
         storedToken = nil
-        isAuthenticated = false
+        storedStudentId = nil
+        storedEmail = nil
+        storedName = nil
         storedLmsLinked = false
+        isAuthenticated = false
     }
     
     func linkLms(username: String, password: String, progress: @escaping (Int)->Void) async {
-        await MainActor.run { self.isLinkingLMS = true; self.errorMessage = nil }
-        // TODO: 서버에 LMS 계정 등록 및 초기 수집 트리거. 여기서는 진행률 시뮬레이션
-        for p in stride(from: 5, through: 100, by: 7) {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            await MainActor.run { progress(min(p,100)) }
+        await MainActor.run { 
+            self.isLinkingLMS = true
+            self.errorMessage = nil
         }
+        
+        // LMS 연결 완료 후
         await MainActor.run {
             self.storedLmsLinked = true
             self.isLinkingLMS = false
         }
+    }
+    
+    // LMS 연결 상태 업데이트
+    func setLmsLinked(_ linked: Bool) {
+        storedLmsLinked = linked
     }
 }

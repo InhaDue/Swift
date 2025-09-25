@@ -112,54 +112,60 @@ struct DataLoadingView: View {
             accountDone = true
         }
         
-        // 단계 2: 수동 로그인 이후 내부 크롤링
-        progress = 30
-        
-        crawler.startAfterManualLogin { result in
-            Task { @MainActor in
-                switch result {
-                case .success(let data):
-                    // 크롤링 성공
-                    progress = 60
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        assignmentDone = true
+                // 단계 2: 수동 로그인 이후 실제 크롤링
+                progress = 30
+                
+                // 실제 WebView 크롤링 시작
+                crawler.startAfterManualLogin { result in
+                    Task { @MainActor in
+                        switch result {
+                        case .success(let crawlData):
+                            // 크롤링 성공
+                            progress = 60
+                            withAnimation(.easeInOut(duration: 0.28)) {
+                                assignmentDone = true
+                            }
+                            
+                            // 서버로 데이터 전송
+                            do {
+                                let studentId = UserDefaults.standard.object(forKey: "studentId") as? Int ?? 1
+                                try await sendCrawlDataToServer(crawlData, studentId: studentId)
+                                
+                                progress = 90
+                                withAnimation(.easeInOut(duration: 0.28)) {
+                                    scheduleDone = true
+                                }
+                                
+                                // 백그라운드 업데이트 매니저에 자격 증명 저장
+                                backgroundManager.saveLMSCredentials(username: username, password: password)
+                                
+                                // LMS 연결 상태 업데이트
+                                await auth.linkLms(username: username, password: password) { _ in }
+                                
+                                progress = 100
+                                isLoading = false
+                                
+                                // 완료 후 화면 닫기
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                                dismiss()
+                                
+                            } catch {
+                                errorMessage = "서버 전송 실패: \(error.localizedDescription)"
+                                isLoading = false
+                            }
+                            
+                        case .failure(let error):
+                            errorMessage = "크롤링 실패: \(error.localizedDescription)"
+                            isLoading = false
+                        }
                     }
-                    
-                    // 서버로 데이터 전송
-                    await self.sendDataToServer(data)
-                    
-                    progress = 90
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        scheduleDone = true
-                    }
-                    
-                    // 백그라운드 업데이트 매니저에 자격 증명 저장
-                    backgroundManager.saveLMSCredentials(username: username, password: password)
-                    
-                    // LMS 연결 상태 업데이트
-                    await auth.linkLms(username: username, password: password) { _ in }
-                    
-                    progress = 100
-                    isLoading = false
-                    
-                    // 완료 후 화면 닫기
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    dismiss()
-                    
-                case .failure(let error):
-                    errorMessage = error.localizedDescription
-                    isLoading = false
                 }
-            }
-        }
     }
     
-    private func sendDataToServer(_ data: LMSWebCrawler.CrawlData) async {
+    private func sendCrawlDataToServer(_ data: LMSWebCrawler.CrawlData, studentId: Int) async throws {
         // 서버로 크롤링 데이터 전송
-        guard let studentId = UserDefaults.standard.object(forKey: "studentId") as? Int,
-              let url = URL(string: "\(AppConfig.API.submitCrawlData)/\(studentId)") else {
-            errorMessage = "서버 연결 실패"
-            return
+        guard let url = URL(string: "\(AppConfig.API.submitCrawlData)/\(studentId)") else {
+            throw URLError(.badURL)
         }
         
         var request = URLRequest(url: url)
@@ -173,13 +179,25 @@ struct DataLoadingView: View {
         
         do {
             let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
             request.httpBody = try encoder.encode(data)
             
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
             
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode != 200 {
-                    errorMessage = "서버 오류: \(httpResponse.statusCode)"
+                    // 서버 오류 응답 본문 출력
+                    if let errorBody = String(data: responseData, encoding: .utf8) {
+                        print("Server error response: \(errorBody)")
+                        errorMessage = "서버 오류 \(httpResponse.statusCode): \(errorBody)"
+                    } else {
+                        errorMessage = "서버 오류: \(httpResponse.statusCode)"
+                    }
+                } else {
+                    // 성공 시 응답 확인
+                    if let successBody = String(data: responseData, encoding: .utf8) {
+                        print("Server success response: \(successBody)")
+                    }
                 }
             }
         } catch {

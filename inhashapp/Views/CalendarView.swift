@@ -1,18 +1,37 @@
 import SwiftUI
 
 struct CalendarView: View {
-    @EnvironmentObject private var store: ScheduleStore
+    @EnvironmentObject private var auth: AuthStore
+    @StateObject private var deadlineStore = DeadlineStore()
     @State private var currentMonth: Date = Date()
     @State private var selectedDate: Date = Date()
     @State private var mode: CalendarMode = .month
     @State private var showingAddSheet: Bool = false
     
-    private var monthItems: [ScheduleItem] { store.items.filter { Calendar.current.isDate($0.due, equalTo: currentMonth, toGranularity: .month) } }
-    private var weekItems: [ScheduleItem] {
-        let cal = Calendar.current
-        let startOfWeek = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date()))!
-        let endOfWeek = cal.date(byAdding: .day, value: 7, to: startOfWeek)!
-        return store.items.filter { $0.due >= startOfWeek && $0.due < endOfWeek }
+    private var monthItems: [AssignmentItem] {
+        deadlineStore.allDeadlines.filter {
+            Calendar.current.isDate($0.dueAt, equalTo: currentMonth, toGranularity: .month)
+        }
+    }
+    
+    private var weekItems: [AssignmentItem] {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // 이번 주의 시작과 끝 계산 (한국 시간 기준)
+        var startOfWeek = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)
+        startOfWeek.weekday = 2 // Monday
+        startOfWeek.timeZone = TimeZone(identifier: "Asia/Seoul")
+        
+        guard let monday = calendar.date(from: startOfWeek) else { return [] }
+        guard let sunday = calendar.date(byAdding: .day, value: 6, to: monday) else { return [] }
+        
+        // 일요일 23:59:59까지 포함
+        let endOfWeek = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: sunday) ?? sunday
+        
+        return deadlineStore.allDeadlines.filter { item in
+            item.dueAt >= monday && item.dueAt <= endOfWeek
+        }.sorted { $0.dueAt < $1.dueAt }
     }
     
     var body: some View {
@@ -27,7 +46,7 @@ struct CalendarView: View {
                                       dots: monthDots())
                         .padding(.horizontal, 16)
                 } else {
-                    WeekPlaceholder()
+                    WeekSummaryCard(weekItems: weekItems)
                         .padding(.horizontal, 16)
                 }
                 
@@ -40,26 +59,22 @@ struct CalendarView: View {
                 Spacer(minLength: 0)
             }
         }
-        .overlay(alignment: .bottomTrailing) {
-            Button(action: { showingAddSheet = true }) {
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    Image(systemName: "plus")
-                        .foregroundColor(.white)
-                        .font(.system(size: 22, weight: .bold))
-                }
-                .frame(width: 54, height: 54)
-                .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
-                .padding(20)
-            }
-            .buttonStyle(.plain)
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            AddReminderSheet(initialDate: selectedDate) { newItem in
-                store.items.append(newItem)
+        .onAppear {
+            Task {
+                await fetchData()
             }
         }
+        .refreshable {
+            await fetchData()
+        }
+    }
+    
+    private func fetchData() async {
+        guard let studentId = auth.studentId, let token = auth.token else {
+            deadlineStore.errorMessage = "로그인 정보가 없습니다."
+            return
+        }
+        await deadlineStore.fetchAllDeadlines(studentId: studentId, token: token)
     }
     
     private var topBar: some View {
@@ -94,12 +109,19 @@ struct CalendarView: View {
         }
     }
     private func lastDay(of date: Date) -> Int { Calendar.current.range(of: .day, in: .month, for: date)?.count ?? 28 }
-    private func monthDots() -> Set<Int> { var days = Set<Int>(); let cal = Calendar.current; for it in monthItems { days.insert(cal.component(.day, from: it.due)) }; return days }
+    private func monthDots() -> Set<Int> { 
+        var days = Set<Int>()
+        let cal = Calendar.current
+        for item in monthItems {
+            days.insert(cal.component(.day, from: item.dueAt))
+        }
+        return days
+    }
     private func monthTitle(_ date: Date) -> String { let f = DateFormatter(); f.locale = Locale(identifier: "ko_KR"); f.dateFormat = "YYYY년 M월"; return f.string(from: date) }
-    private func dayItems() -> [ScheduleItem] {
-        store.items
-            .filter { Calendar.current.isDate($0.due, inSameDayAs: selectedDate) }
-            .sorted { $0.due < $1.due }
+    private func dayItems() -> [AssignmentItem] {
+        deadlineStore.allDeadlines
+            .filter { Calendar.current.isDate($0.dueAt, inSameDayAs: selectedDate) }
+            .sorted { $0.dueAt < $1.dueAt }
     }
 }
 
@@ -198,34 +220,28 @@ private struct MonthCalendarCard: View {
                             let isSelected = Calendar.current.isDate(cellDate, inSameDayAs: selectedDate)
                             let isToday = Calendar.current.isDateInToday(cellDate)
                             Circle()
-                                .fill(
-                                    isSelected ? Color.blue : Color.white.opacity(0.9)
-                                )
-                                .frame(width: 36, height: 36)
-                                .shadow(color: .black.opacity(isSelected ? 0.2 : 0.06), radius: isSelected ? 8 : 6, x: 0, y: 4)
+                                .fill(isSelected ? Color.blue : (isToday ? Color.purple.opacity(0.2) : Color.clear))
+                                .frame(width: 38, height: 38)
                             Text("\(day)")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(isSelected ? .white : .primary)
+                                .font(.system(size: 14, weight: isSelected || isToday ? .semibold : .regular))
+                                .foregroundColor(isSelected ? .white : (isToday ? .purple : .primary))
                             if dots.contains(day) {
-                                Circle().fill(isSelected ? Color.white : Color.blue)
-                                    .frame(width: 4, height: 4)
-                                    .offset(y: 13)
+                                Circle()
+                                    .fill(isSelected ? Color.white : Color.orange)
+                                    .frame(width: 5, height: 5)
+                                    .offset(y: 14)
                             }
-                            if isToday && !isSelected {
-                                Circle().stroke(Color.blue.opacity(0.35), lineWidth: 1)
-                                    .frame(width: 36, height: 36)
-                            }
-                        } else {
-                            Color.clear.frame(height: 36)
                         }
                     }
-                    .frame(height: 40)
+                    .frame(width: 38, height: 38)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if let day = day {
                             let comps = Calendar.current.dateComponents([.year, .month], from: month)
-                            if let d = Calendar.current.date(from: DateComponents(year: comps.year, month: comps.month, day: day)) {
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) { selectedDate = d }
+                            if let newDate = Calendar.current.date(from: DateComponents(year: comps.year, month: comps.month, day: day)) {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                    selectedDate = newDate
+                                }
                             }
                         }
                     }
@@ -234,203 +250,165 @@ private struct MonthCalendarCard: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.9))
-                .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 10)
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.08), radius: 14, x: 0, y: 8)
         )
+    }
+}
+
+private struct WeekSummaryCard: View {
+    let weekItems: [AssignmentItem]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("이번 주 일정")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.primary)
+            
+            if weekItems.isEmpty {
+                Text("이번 주 일정이 없습니다.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(weekItems.prefix(5)) { item in
+                        HStack {
+                            Circle()
+                                .fill(item.type == "assignment" ? Color.orange : Color.blue)
+                                .frame(width: 8, height: 8)
+                            
+                            Text(item.title)
+                                .font(.system(size: 14))
+                                .lineLimit(1)
+                            
+                            Spacer()
+                            
+                            Text(formatDate(item.dueAt))
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    if weekItems.count > 5 {
+                        Text("외 \(weekItems.count - 5)개...")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.08), radius: 14, x: 0, y: 8)
+        )
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "M/d(E)"
+        return formatter.string(from: date)
     }
 }
 
 private struct MonthlySummaryCard: View {
-    let monthItems: [ScheduleItem]
+    let monthItems: [AssignmentItem]
     
-    private var countAssignments: Int { monthItems.filter { $0.type == .assignment }.count }
-    private var countLectures: Int { monthItems.filter { $0.type == .lecture }.count }
-    private var countUrgent: Int {
-        let now = Date()
-        return monthItems.filter { $0.due <= Calendar.current.date(byAdding: .day, value: 2, to: now)! }.count
-    }
+    private var assignmentCount: Int { monthItems.filter { $0.type == "assignment" }.count }
+    private var lectureCount: Int { monthItems.filter { $0.type == "lecture" || $0.type == "class" }.count }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("이번 달 요약")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.secondary)
-            HStack {
-                SummaryStat(value: countAssignments, label: "총 과제", color: .blue)
-                Spacer()
-                SummaryStat(value: countLectures, label: "수업", color: .green)
-                Spacer()
-                SummaryStat(value: countUrgent, label: "긴급", color: .red)
-            }
-            .padding(.horizontal, 6)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 10)
-        )
-    }
-}
-
-private struct SummaryStat: View {
-    let value: Int
-    let label: String
-    let color: Color
-    var body: some View {
-        VStack(spacing: 6) {
-            Text("\(value)")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(color)
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct WeekPlaceholder: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 20)
-            .fill(Color.white.opacity(0.9))
-            .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 10)
-            .overlay(
-                Text("주간 보기 준비중")
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("이번 달 요약")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
-            )
-            .frame(height: 120)
+                HStack(spacing: 16) {
+                    Label("\(assignmentCount)", systemImage: "doc.text")
+                        .font(.system(size: 15, weight: .semibold))
+                    Label("\(lectureCount)", systemImage: "video")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemGray6))
+        )
     }
 }
 
 private struct DayDueListCard: View {
     let date: Date
-    let items: [ScheduleItem]
+    let items: [AssignmentItem]
     
-    private var dateTitle: String {
+    private var dateString: String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일 마감"
+        f.dateFormat = "M월 d일 EEEE"
         return f.string(from: date)
-    }
-    
-    private var timeFormatter: DateFormatter {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(dateTitle)
-                .font(.subheadline.weight(.semibold))
+            Text(dateString)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.secondary)
+            
             if items.isEmpty {
-                HStack {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundColor(.secondary)
-                    Text("마감 항목이 없습니다")
-                        .foregroundColor(.secondary)
-                        .font(.footnote)
-                    Spacer()
-                }
-                .padding(.vertical, 6)
+                Text("일정 없음")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 20)
             } else {
-                ForEach(items.prefix(4)) { item in
-                    HStack(spacing: 10) {
-                        ZStack {
-                            Circle().fill(color(for: item.type).opacity(0.15))
-                            Image(systemName: item.type.icon)
-                                .foregroundColor(color(for: item.type))
-                                .font(.footnote)
-                        }
-                        .frame(width: 26, height: 26)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title)
-                                .font(.footnote.weight(.semibold))
-                                .lineLimit(1)
-                            Text(item.course)
-                                .font(.caption2)
+                VStack(spacing: 8) {
+                    ForEach(items) { item in
+                        HStack {
+                            Image(systemName: item.type == "assignment" ? "doc.text" : "video")
+                                .foregroundColor(item.type == "assignment" ? .orange : .blue)
+                                .font(.system(size: 14))
+                                .frame(width: 20)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .lineLimit(1)
+                                Text(item.courseName)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Text(formatTime(item.dueAt))
+                                .font(.system(size: 12))
                                 .foregroundColor(.secondary)
-                                .lineLimit(1)
                         }
-                        Spacer()
-                        Text(timeFormatter.string(from: item.due))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 6)
                 }
             }
         }
-        .padding(16)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white)
-                .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 10)
+                .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 6)
         )
     }
     
-    private func color(for type: ScheduleType) -> Color {
-        switch type {
-        case .assignment: return .blue
-        case .lecture: return .green
-        }
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 }
-
-private struct AddReminderSheet: View {
-    @Environment(\..dismiss) private var dismiss
-    let onAdd: (ScheduleItem) -> Void
-    @State private var title: String = ""
-    @State private var course: String = ""
-    @State private var type: ScheduleType = .assignment
-    @State private var due: Date
-    
-    init(initialDate: Date, onAdd: @escaping (ScheduleItem) -> Void) {
-        self._due = State(initialValue: initialDate)
-        self.onAdd = onAdd
-    }
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("유형")) {
-                    Picker("유형", selection: $type) {
-                        ForEach(ScheduleType.allCases) { t in
-                            Text(t.title).tag(t)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                Section(header: Text("제목")) {
-                    TextField("예: 과제 제출 알림", text: $title)
-                }
-                Section(header: Text("과목")) {
-                    TextField("예: 객체지향프로그래밍", text: $course)
-                }
-                Section(header: Text("마감일시")) {
-                    DatePicker("마감", selection: $due, displayedComponents: [.date, .hourAndMinute])
-                }
-            }
-            .navigationTitle("알림 추가")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("추가") {
-                        let item = ScheduleItem(type: type, course: course.isEmpty ? "기타" : course, title: title.isEmpty ? "새 알림" : title, due: due)
-                        onAdd(item)
-                        dismiss()
-                    }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-    }
-}
-private extension DateComponents { func setting(day: Int) -> DateComponents { var c = self; c.day = day; return c } }
-
-
