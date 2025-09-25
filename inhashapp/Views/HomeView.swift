@@ -21,26 +21,6 @@ struct HomeView: View {
                 VStack(spacing: 16) {
                     HomeHeader()
                     
-                    SectionHeader(title: "오늘의 일정")
-                    if deadlineStore.isLoading {
-                        ProgressView("로딩 중...")
-                            .padding()
-                    } else if let errorMessage = deadlineStore.errorMessage {
-                        Text("오류: \(errorMessage)")
-                            .foregroundColor(.red)
-                            .padding()
-                    } else if deadlineStore.todayDeadlines.isEmpty {
-                        Text("오늘 일정이 없습니다.")
-                            .foregroundColor(.secondary)
-                            .padding()
-                    } else {
-                        LazyVStack(spacing: 12) {
-                            ForEach(deadlineStore.todayDeadlines) { item in
-                                ScheduleCard(item: item)
-                            }
-                        }
-                    }
-
                     SectionHeader(title: "다가오는 일정")
                     FilterBar(selected: $selectedFilter)
                     if deadlineStore.isLoading {
@@ -81,7 +61,6 @@ struct HomeView: View {
             deadlineStore.errorMessage = "로그인 정보가 없습니다."
             return
         }
-        await deadlineStore.fetchTodayDeadlines(studentId: studentId, token: token)
         await deadlineStore.fetchAllDeadlines(studentId: studentId, token: token)
     }
 }
