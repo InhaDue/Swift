@@ -2,12 +2,11 @@ import SwiftUI
 
 struct LmsLinkView: View {
     @EnvironmentObject private var auth: AuthStore
+    @StateObject private var crawler = LMSWebCrawler()
+    @StateObject private var backgroundManager = BackgroundUpdateManager.shared
     @State private var username = ""
     @State private var password = ""
-    @State private var progress = 0
     @State private var loading = false
-    @State private var testLoading = false
-    @State private var testConnected = false
     @State private var showLoadingScreen = false
     
     var body: some View {
@@ -51,40 +50,14 @@ struct LmsLinkView: View {
                     IconTextField(systemImage: "lock", placeholder: "LMS 비밀번호", text: $password, isSecure: .constant(true), showSecure: .constant(false))
                         .frame(height: 44)
                     
-                    // 버튼 / 진행
-                    // 로컬 로딩바 제거 (로딩 화면으로 이동)
-                    
-                    // 테스트 연결하기 버튼 (동일 스타일)
-                    Button(action: testSubmit) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
-                                )
-                            HStack(spacing: 8) {
-                                if testLoading { ProgressView().tint(.primary).scaleEffect(0.9) }
-                                Text(testLoading ? "테스트 중..." : (testConnected ? "테스트 연결 성공" : "테스트 연결하기"))
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                            }
-                            .padding(.horizontal, 8)
-                        }
-                        .frame(height: 48)
-                        .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 8)
-                    }
-                    .buttonStyle(LightenOnPressStyle(cornerRadius: 12, overlayOpacity: 0.12))
-                    .disabled(testLoading || username.isEmpty || password.isEmpty)
-
+                    // LMS 연결 버튼
                     Button(action: submit) {
-                        PrimaryButtonLabel(title: "LMS 연결하기", loading: false)
+                        PrimaryButtonLabel(title: loading ? "연결 중..." : "LMS 연결하기", loading: loading)
                             .frame(height: 48)
                     }
                     .buttonStyle(LightenOnPressStyle(cornerRadius: 12, overlayOpacity: 0.12))
-                    .disabled(isLmsDisabled)
-                    .opacity(isLmsDisabled ? 0.55 : 1.0)
-                    .saturation(isLmsDisabled ? 0.7 : 1.0)
+                    .disabled(username.isEmpty || password.isEmpty || loading)
+                    .opacity((username.isEmpty || password.isEmpty) ? 0.55 : 1.0)
                     .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 8)
                     
                     HStack(spacing: 6) {
@@ -111,25 +84,23 @@ struct LmsLinkView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 0)
-            .onChange(of: username) { testConnected = false }
-            .onChange(of: password) { testConnected = false }
         }
         .fullScreenCover(isPresented: $showLoadingScreen) {
             DataLoadingView(username: username, password: password)
                 .environmentObject(auth)
         }
-        // 로딩 화면을 fullScreenCover로 표시
     }
-    private var isLmsDisabled: Bool { username.isEmpty || password.isEmpty || !testConnected }
-    private func submit() { showLoadingScreen = true }
-    private func testSubmit() {
-        testLoading = true
+    
+    private func submit() {
+        loading = true
         auth.errorMessage = nil
-        // 네트워크 체크를 가정한 짧은 지연
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-            testLoading = false
-            testConnected = true
-        }
+        
+        // LMS 자격 증명 저장
+        backgroundManager.saveLMSCredentials(username: username, password: password)
+        
+        // 바로 데이터 로딩 화면으로 이동
+        loading = false
+        showLoadingScreen = true
     }
 }
 
