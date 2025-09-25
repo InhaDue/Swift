@@ -11,8 +11,14 @@ class LMSWebCrawler: NSObject, ObservableObject {
     @Published var statusMessage: String = ""
     @Published var errorMessage: String?
     
-    private var webView: WKWebView?
+    // 외부 UI에서 임베드할 수 있도록 노출
+    let webView: WKWebView
+    
+    // 콜백/상태
     private var completion: ((Result<CrawlData, Error>) -> Void)?
+    private var onManualLoginSuccess: (() -> Void)?
+    private var manualLoginMode: Bool = false
+    
     private var currentUsername: String?
     private var currentPassword: String?
     
@@ -39,18 +45,14 @@ class LMSWebCrawler: NSObject, ObservableObject {
     }
     
     override init() {
-        super.init()
-        setupWebView()
-    }
-    
-    private func setupWebView() {
+        // 웹뷰 구성 생성
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.applicationNameForUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        
-        webView = WKWebView(frame: .zero, configuration: configuration)
-        webView?.navigationDelegate = self
+        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        self.webView.navigationDelegate = self
     }
     
     /// LMS 크롤링 시작
@@ -68,8 +70,29 @@ class LMSWebCrawler: NSObject, ObservableObject {
             completion(.failure(CrawlError.invalidURL))
             return
         }
-        
-        webView?.load(URLRequest(url: url))
+        manualLoginMode = false
+        webView.load(URLRequest(url: url))
+    }
+    
+    /// 수동 로그인 UI 플로우 시작: 웹뷰를 화면에 보여주고 사용자가 직접 로그인
+    func startManualLogin(onSuccess: @escaping () -> Void) {
+        self.onManualLoginSuccess = onSuccess
+        self.manualLoginMode = true
+        self.isLoading = false
+        self.progress = 0
+        self.errorMessage = nil
+        self.statusMessage = "로그인 준비 중..."
+        guard let url = URL(string: "https://learn.inha.ac.kr/login/index.php") else { return }
+        webView.load(URLRequest(url: url))
+    }
+    
+    /// 수동 로그인 후 크롤링 계속 (UI는 닫히고 내부에서 계속 진행)
+    func startAfterManualLogin(completion: @escaping (Result<CrawlData, Error>) -> Void) {
+        self.completion = completion
+        self.isLoading = true
+        self.progress = 0.4
+        self.statusMessage = "대시보드 로딩 중..."
+        navigateToDashboardAndExtract()
     }
     
     private func performLogin() {
@@ -105,7 +128,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
         })();
         """
         
-        webView?.evaluateJavaScript(loginScript) { [weak self] result, error in
+        webView.evaluateJavaScript(loginScript) { [weak self] result, error in
             if let error = error {
                 self?.completion?(.failure(error))
                 return
@@ -124,9 +147,17 @@ class LMSWebCrawler: NSObject, ObservableObject {
         
         // 로그인 성공 확인 후 대시보드로 이동
         guard let url = URL(string: "https://learn.inha.ac.kr/") else { return }
-        webView?.load(URLRequest(url: url))
+        webView.load(URLRequest(url: url))
         
         // 대시보드 로딩 대기 후 데이터 추출
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.extractAllData()
+        }
+    }
+    
+    private func navigateToDashboardAndExtract() {
+        guard let url = URL(string: "https://learn.inha.ac.kr/") else { return }
+        webView.load(URLRequest(url: url))
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.extractAllData()
         }
@@ -232,7 +263,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
         })();
         """
         
-        webView?.evaluateJavaScript(extractScript) { [weak self] result, error in
+        webView.evaluateJavaScript(extractScript) { [weak self] result, error in
             guard let self = self else { return }
             
             if let error = error {
@@ -296,7 +327,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
         })();
         """
         
-        webView?.evaluateJavaScript(alternativeScript) { [weak self] result, error in
+        webView.evaluateJavaScript(alternativeScript) { [weak self] result, error in
             self?.processExtractedData(result)
         }
     }
@@ -381,10 +412,19 @@ extension LMSWebCrawler: WKNavigationDelegate {
         let url = webView.url?.absoluteString ?? ""
         print("Page loaded: \(url)")
         
-        // 로그인 페이지에서 자동 로그인 시도
+        // 수동 모드가 아니면 자동 로그인 시도
         if url.contains("login/index.php") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                self?.performLogin()
+            if !manualLoginMode {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.performLogin()
+                }
+            }
+        } else if manualLoginMode {
+            // 수동 로그인 모드에서 로그인 성공 감지: 로그인 페이지가 아닌 주요 페이지로 전환되면 성공으로 간주
+            if url.contains("learn.inha.ac.kr/my") || url == "https://learn.inha.ac.kr/" || url.contains("/course/") {
+                manualLoginMode = false
+                onManualLoginSuccess?()
+                onManualLoginSuccess = nil
             }
         }
     }

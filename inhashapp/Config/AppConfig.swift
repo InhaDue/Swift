@@ -23,3 +23,4 @@ struct AppConfig {
     static let backgroundTaskIdentifier = "com.inhash.app.refresh"
     static let backgroundUpdateInterval: TimeInterval = 60 * 60 * 6 // 6시간
 }
+

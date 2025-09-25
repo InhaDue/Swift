@@ -24,6 +24,10 @@ final class AuthStore: ObservableObject {
         await MainActor.run {
             self.storedToken = UUID().uuidString
             self.isAuthenticated = true
+            // 테스트용 studentId 주입 (서버는 없으면 자동 생성)
+            if UserDefaults.standard.object(forKey: "studentId") == nil {
+                UserDefaults.standard.set(1, forKey: "studentId")
+            }
         }
     }
     
@@ -34,6 +38,10 @@ final class AuthStore: ObservableObject {
         await MainActor.run {
             self.storedToken = UUID().uuidString
             self.isAuthenticated = true
+            // 테스트용 studentId 주입 (서버는 없으면 자동 생성)
+            if UserDefaults.standard.object(forKey: "studentId") == nil {
+                UserDefaults.standard.set(1, forKey: "studentId")
+            }
         }
     }
     

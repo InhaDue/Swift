@@ -3,7 +3,8 @@ import SwiftUI
 struct DataLoadingView: View {
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var crawler = LMSWebCrawler()
+    // WebLoginView에서 사용한 동일 세션을 이어받기 위해 외부 주입 허용
+    @StateObject var crawler = LMSWebCrawler()
     @StateObject private var backgroundManager = BackgroundUpdateManager.shared
     
     let username: String
@@ -99,7 +100,7 @@ struct DataLoadingView: View {
         .task {
             isLoading = true
             
-            // 실제 크롤링 수행
+            // 수동 로그인 이후 내부 크롤링 수행
             await performCrawling()
         }
     }
@@ -111,10 +112,10 @@ struct DataLoadingView: View {
             accountDone = true
         }
         
-        // 단계 2: WebView로 LMS 크롤링
+        // 단계 2: 수동 로그인 이후 내부 크롤링
         progress = 30
         
-        crawler.startCrawling(username: username, password: password) { result in
+        crawler.startAfterManualLogin { result in
             Task { @MainActor in
                 switch result {
                 case .success(let data):

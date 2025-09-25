@@ -7,6 +7,9 @@ struct LmsLinkView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var loading = false
+    @State private var showConsent = false
+    @State private var consentAccepted = false
+    @State private var showWebLogin = false
     @State private var showLoadingScreen = false
     
     var body: some View {
@@ -50,7 +53,7 @@ struct LmsLinkView: View {
                     IconTextField(systemImage: "lock", placeholder: "LMS 비밀번호", text: $password, isSecure: .constant(true), showSecure: .constant(false))
                         .frame(height: 44)
                     
-                    // LMS 연결 버튼
+                    // LMS 연결 버튼: 동의 → 웹뷰 로그인 → 로딩 → 서버전송
                     Button(action: submit) {
                         PrimaryButtonLabel(title: loading ? "연결 중..." : "LMS 연결하기", loading: loading)
                             .frame(height: 48)
@@ -85,8 +88,23 @@ struct LmsLinkView: View {
             }
             .padding(.horizontal, 0)
         }
+        .sheet(isPresented: $showConsent) {
+            ConsentView(accepted: $consentAccepted) {
+                showConsent = false
+                showWebLogin = true
+            }
+            .background(AppBackground())
+        }
+        .fullScreenCover(isPresented: $showWebLogin) {
+            WebLoginView(crawler: crawler) {
+                // 웹뷰 로그인 성공 → 웹뷰 닫고 로딩 화면으로 전환하고 백그라운드 크롤링 진행
+                showWebLogin = false
+                showLoadingScreen = true
+            }
+        }
         .fullScreenCover(isPresented: $showLoadingScreen) {
-            DataLoadingView(username: username, password: password)
+            // 동일한 crawler 인스턴스를 전달하여 세션 유지
+            DataLoadingView(crawler: crawler, username: username, password: password)
                 .environmentObject(auth)
         }
     }
@@ -95,12 +113,13 @@ struct LmsLinkView: View {
         loading = true
         auth.errorMessage = nil
         
-        // LMS 자격 증명 저장
+        // 자격증명은 기기에 저장(서버 무전송)
         backgroundManager.saveLMSCredentials(username: username, password: password)
         
-        // 바로 데이터 로딩 화면으로 이동
+        // 동의 페이지 → 웹뷰 로그인 → 로딩 화면 순으로 진행
         loading = false
-        showLoadingScreen = true
+        consentAccepted = false
+        showConsent = true
     }
 }
 
