@@ -21,6 +21,30 @@ class LMSWebCrawler: NSObject, ObservableObject {
     private var courses: [CrawlData.Course] = []
     private var items: [CrawlData.Item] = []
     private var currentCourseIndex = 0
+    private var currentCrawlInfo: (courseId: String, courseName: String, type: String)?
+    
+    /// 과목명 정리 (불필요한 접두사 제거)
+    private func cleanCourseName(_ name: String) -> String {
+        let prefixesToRemove = [
+            "비러닝학부",
+            "오프라인학부",
+            "원격활용학부",
+            "블렌디드러닝학부",
+            "온라인학부",
+            "비대면학부",
+            "대면학부"
+        ]
+        
+        var cleaned = name
+        for prefix in prefixesToRemove {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+        }
+        
+        return cleaned
+    }
     
     struct CrawlData: Codable {
         let clientVersion: String
@@ -227,22 +251,27 @@ class LMSWebCrawler: NSObject, ObservableObject {
                 self.courses = coursesArray.compactMap { dict in
                     guard let name = dict["name"] as? String,
                           let mainLink = dict["mainLink"] as? String else { return nil }
-                    return CrawlData.Course(name: name, mainLink: mainLink)
+                    return CrawlData.Course(name: self.cleanCourseName(name), mainLink: mainLink)
                 }
                 
                 print("Found \(self.courses.count) courses")
                 
                 if self.courses.isEmpty {
-                    // 과목이 없으면 대시보드 데이터만 추출
-                    self.extractDashboardData()
+                    // 과목이 없으면 에러 - 대시보드 데이터는 과목 정보가 없어 사용 안함
+                    print("ERROR: No courses found! Cannot proceed without course information")
+                    self.errorMessage = "과목 정보를 찾을 수 없습니다"
+                    self.finishCrawling()
                 } else {
                     // 각 과목별로 크롤링 시작
+                    print("Starting course-by-course crawling with \(self.courses.count) courses")
                     self.currentCourseIndex = 0
                     self.crawlNextCourse()
                 }
             } else {
-                // 추출 실패 시 대시보드 데이터만
-                self.extractDashboardData()
+                // 추출 실패 시 에러
+                print("ERROR: Failed to extract courses from JavaScript")
+                self.errorMessage = "과목 정보 추출 실패"
+                self.finishCrawling()
             }
         }
     }
@@ -267,16 +296,31 @@ class LMSWebCrawler: NSObject, ObservableObject {
     
     /// 과제 페이지 크롤링
     private func crawlAssignments(courseId: String, courseName: String) {
+        let cleanedCourseName = cleanCourseName(courseName)
+        print("=== Crawling assignments for course: \(cleanedCourseName) (ID: \(courseId))")
+        
         let assignUrl = "https://learn.inha.ac.kr/mod/assign/index.php?id=\(courseId)"
         guard let url = URL(string: assignUrl) else {
+            print("Invalid assignment URL for course: \(cleanedCourseName)")
             crawlVODs(courseId: courseId, courseName: courseName)
             return
         }
         
-        webView.load(URLRequest(url: url))
+        // 현재 크롤링 정보 저장 (페이지 로드 완료 후 사용)
+        self.currentCrawlInfo = (courseId: courseId, courseName: courseName, type: "assignment")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            let assignScript = """
+        // 페이지 로드
+        webView.stopLoading()
+        webView.load(URLRequest(url: url))
+        // webView:didFinishNavigation:에서 계속됨
+    }
+    
+    /// 과제 데이터 추출 (페이지 로드 완료 후 호출)
+    private func extractAssignmentData(courseId: String, courseName: String) {
+        let cleanedCourseName = cleanCourseName(courseName)
+        print("Extracting assignment data for: \(cleanedCourseName)")
+        
+        let assignScript = """
             (function() {
                 var assignments = [];
                 var tables = document.querySelectorAll('table');
@@ -333,30 +377,40 @@ class LMSWebCrawler: NSObject, ObservableObject {
             })();
             """
             
+        // 현재 페이지 URL 확인
+        webView.evaluateJavaScript("window.location.href") { [weak self] currentUrl, _ in
+            print("Current page URL when extracting assignments: \(currentUrl ?? "unknown")")
+            
             self?.webView.evaluateJavaScript(assignScript) { result, error in
-                if let json = result as? String,
-                   let data = json.data(using: .utf8),
-                   let assignments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                    
-                    for assign in assignments {
-                        if let title = assign["title"] as? String,
-                           let url = assign["url"] as? String,
-                           let due = assign["due"] as? String {
-                            
-                            let item = CrawlData.Item(
-                                type: "assignment",
-                                courseName: courseName,
-                                title: title,
-                                url: url,
-                                due: self?.normalizeDueDate(due),
-                                remainingSeconds: nil
-                            )
-                            self?.items.append(item)
+                    if let json = result as? String,
+                       let data = json.data(using: .utf8),
+                       let assignments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                        
+                        for assign in assignments {
+                            if let title = assign["title"] as? String,
+                               let url = assign["url"] as? String,
+                               let due = assign["due"] as? String {
+                                
+                                // vivado 관련 항목 디버깅
+                                if title.lowercased().contains("vivado") {
+                                    print("🔍 Found vivado assignment: '\(title)' in course: '\(cleanedCourseName)' from page: \(currentUrl ?? "unknown")")
+                                }
+                                
+                                let item = CrawlData.Item(
+                                    type: "assignment",
+                                    courseName: cleanedCourseName,
+                                    title: title,
+                                    url: nil,  // URL 전송하지 않음 (개인정보 보호)
+                                    due: self?.normalizeDueDate(due),
+                                    remainingSeconds: nil
+                                )
+                                self?.items.append(item)
+                            }
                         }
                     }
-                }
                 
                 // VOD 크롤링으로 이동
+                self?.currentCrawlInfo = nil  // 현재 작업 초기화
                 self?.crawlVODs(courseId: courseId, courseName: courseName)
             }
         }
@@ -364,6 +418,9 @@ class LMSWebCrawler: NSObject, ObservableObject {
     
     /// VOD 페이지 크롤링
     private func crawlVODs(courseId: String, courseName: String) {
+        let cleanedCourseName = cleanCourseName(courseName)
+        print("=== Crawling VODs for course: \(cleanedCourseName) (ID: \(courseId))")
+        
         let courseUrl = "https://learn.inha.ac.kr/course/view.php?id=\(courseId)"
         guard let url = URL(string: courseUrl) else {
             currentCourseIndex += 1
@@ -371,10 +428,21 @@ class LMSWebCrawler: NSObject, ObservableObject {
             return
         }
         
-        webView.load(URLRequest(url: url))
+        // 현재 크롤링 정보 저장 (페이지 로드 완료 후 사용)
+        self.currentCrawlInfo = (courseId: courseId, courseName: courseName, type: "vod")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            let vodScript = """
+        // 페이지 로드
+        webView.stopLoading()
+        webView.load(URLRequest(url: url))
+        // webView:didFinishNavigation:에서 계속됨
+    }
+    
+    /// VOD 데이터 추출 (페이지 로드 완료 후 호출)
+    private func extractVODData(courseId: String, courseName: String) {
+        let cleanedCourseName = cleanCourseName(courseName)
+        print("Extracting VOD data for: \(cleanedCourseName)")
+        
+        let vodScript = """
             (function() {
                 var vods = [];
                 var vodItems = document.querySelectorAll('li.activity.vod.modtype_vod');
@@ -414,7 +482,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
             })();
             """
             
-            self?.webView.evaluateJavaScript(vodScript) { result, error in
+        webView.evaluateJavaScript(vodScript) { [weak self] result, error in
                 if let json = result as? String,
                    let data = json.data(using: .utf8),
                    let vods = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
@@ -424,11 +492,16 @@ class LMSWebCrawler: NSObject, ObservableObject {
                             let url = vod["url"] as? String
                             let due = vod["due"] as? String
                             
+                            // vivado 관련 항목 디버깅
+                            if title.lowercased().contains("vivado") {
+                                print("🔍 Found vivado VOD: '\(title)' in course: '\(cleanedCourseName)'")
+                            }
+                            
                             let item = CrawlData.Item(
                                 type: "class",
-                                courseName: courseName,
+                                courseName: cleanedCourseName,
                                 title: title,
-                                url: url,
+                                url: nil,  // URL 전송하지 않음 (개인정보 보호)
                                 due: self?.normalizeDueDate(due),
                                 remainingSeconds: nil
                             )
@@ -437,10 +510,10 @@ class LMSWebCrawler: NSObject, ObservableObject {
                     }
                 }
                 
-                // 다음 과목으로
-                self?.currentCourseIndex += 1
-                self?.crawlNextCourse()
-            }
+            // 다음 과목으로
+            self?.currentCrawlInfo = nil  // 현재 작업 초기화
+            self?.currentCourseIndex += 1
+            self?.crawlNextCourse()
         }
     }
     
@@ -507,7 +580,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
                             type: type,
                             courseName: item["courseName"] as? String ?? "Unknown",
                             title: title,
-                            url: item["url"] as? String,
+                            url: nil,  // URL 전송하지 않음 (개인정보 보호)
                             due: self?.normalizeDueDate(item["due"] as? String),
                             remainingSeconds: nil
                         )
@@ -618,12 +691,36 @@ extension LMSWebCrawler: WKNavigationDelegate {
             return
         }
         
+        // 현재 크롤링 정보가 있으면 해당 작업 수행 (동기적 처리)
+        if let crawlInfo = currentCrawlInfo {
+            if crawlInfo.type == "assignment" && url.absoluteString.contains("mod/assign/index.php") {
+                // 과제 페이지 로드 완료 - 1초 후 데이터 추출
+                print("Assignment page loaded for \(crawlInfo.courseName), extracting data...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.extractAssignmentData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
+                }
+                return
+            } else if crawlInfo.type == "vod" && url.absoluteString.contains("course/view.php") {
+                // VOD 페이지 로드 완료 - 1초 후 데이터 추출
+                print("VOD page loaded for \(crawlInfo.courseName), extracting data...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.extractVODData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
+                }
+                return
+            }
+        }
+        
         // 자동 로그인 모드
         if url.absoluteString.contains("login/index.php") {
             // 로그인 페이지 로드 완료 - 자동 로그인 시도
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.performLogin()
             }
+        } else if url.absoluteString.contains("learn.inha.ac.kr") && 
+                  (url.absoluteString.contains("/my") || url.absoluteString.contains("/course")) &&
+                  !isCrawling {
+            // 로그인 성공 후 대시보드 또는 과목 페이지
+            handleLoginSuccess()
         }
     }
     

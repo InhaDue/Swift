@@ -16,6 +16,8 @@ struct DataLoadingView: View {
     @State private var assignmentDone: Bool = false
     @State private var scheduleDone: Bool = false
     @State private var errorMessage: String?
+    @State private var fakeProgressTimer: Timer?
+    @State private var assignmentMessage: String = "과제 정보 수집중..."
     
     var body: some View {
         ZStack {
@@ -57,7 +59,7 @@ struct DataLoadingView: View {
                         )
                         StageRow(
                             systemImage: assignmentDone ? "checkmark.circle.fill" : "doc.text.fill",
-                            text: assignmentDone ? "과제 정보 수집 완료" : "과제 정보 수집중...",
+                            text: assignmentDone ? "과제 정보 수집 완료" : assignmentMessage,
                             isDone: assignmentDone,
                             isActive: !assignmentDone && accountDone && !scheduleDone
                         )
@@ -103,6 +105,10 @@ struct DataLoadingView: View {
             // 수동 로그인 이후 내부 크롤링 수행
             await performCrawling()
         }
+        .onDisappear {
+            // 뷰가 사라질 때 타이머 정리
+            stopFakeProgress()
+        }
     }
     
     private func performCrawling() async {
@@ -115,13 +121,19 @@ struct DataLoadingView: View {
                 // 단계 2: 수동 로그인 이후 실제 크롤링
                 progress = 30
                 
+                // 가짜 프로그레스 시작 (30 -> 70까지 천천히 진행)
+                startFakeProgress()
+                
                 // 실제 WebView 크롤링 시작
                 crawler.startAfterManualLogin { result in
                     Task { @MainActor in
+                        // 가짜 프로그레스 중지
+                        self.stopFakeProgress()
+                        
                         switch result {
                         case .success(let crawlData):
                             // 크롤링 성공
-                            progress = 60
+                            progress = 70
                             withAnimation(.easeInOut(duration: 0.28)) {
                                 assignmentDone = true
                             }
@@ -160,6 +172,53 @@ struct DataLoadingView: View {
                         }
                     }
                 }
+    }
+    
+    // 가짜 프로그레스 시작 (30에서 70까지 천천히 증가)
+    private func startFakeProgress() {
+        // 기존 타이머 정리
+        stopFakeProgress()
+        
+        // 20초 동안 30에서 70까지 진행 (40% 증가)
+        // 0.5초마다 1% 증가
+        fakeProgressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
+            Task { @MainActor in
+                if self.progress < 70 {
+                    self.progress += 1
+                    
+                    // 진행률에 따라 메시지 변경
+                    switch self.progress {
+                    case 35:
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            self.assignmentMessage = "과제 목록 불러오는 중..."
+                        }
+                    case 45:
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            self.assignmentMessage = "과제 세부정보 확인 중..."
+                        }
+                    case 55:
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            self.assignmentMessage = "마감일 정보 수집 중..."
+                        }
+                    case 65:
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            self.assignmentMessage = "과제 정보 정리 중..."
+                        }
+                    default:
+                        break
+                    }
+                } else {
+                    // 70%에 도달하면 타이머 중지
+                    timer.invalidate()
+                }
+            }
+        }
+    }
+    
+    // 가짜 프로그레스 중지
+    private func stopFakeProgress() {
+        fakeProgressTimer?.invalidate()
+        fakeProgressTimer = nil
     }
     
     private func sendCrawlDataToServer(_ data: LMSWebCrawler.CrawlData, studentId: Int) async throws {
