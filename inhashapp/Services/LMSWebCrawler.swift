@@ -22,6 +22,7 @@ class LMSWebCrawler: NSObject, ObservableObject {
     private var items: [CrawlData.Item] = []
     private var currentCourseIndex = 0
     private var currentCrawlInfo: (courseId: String, courseName: String, type: String)?
+    private var isCrawling = false
     
     /// 과목명 정리 (불필요한 접두사 제거)
     private func cleanCourseName(_ name: String) -> String {
@@ -193,6 +194,13 @@ class LMSWebCrawler: NSObject, ObservableObject {
         }
     }
     
+    /// 로그인 성공 처리
+    private func handleLoginSuccess() {
+        guard !isCrawling else { return }
+        isCrawling = true
+        extractCourses()
+    }
+    
     /// 과목 목록 추출
     private func extractCourses() {
         statusMessage = "과목 정보 수집 중..."
@@ -323,56 +331,129 @@ class LMSWebCrawler: NSObject, ObservableObject {
         let assignScript = """
             (function() {
                 var assignments = [];
-                var tables = document.querySelectorAll('table');
+                
+                // 방법 1: 일반 테이블에서 찾기
+                var tables = document.querySelectorAll('table.generaltable, table.flexible, table');
+                
+                console.log('Found ' + tables.length + ' tables');
                 
                 for (var t = 0; t < tables.length; t++) {
                     var table = tables[t];
                     var headers = [];
-                    var headerCells = table.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+                    var headerCells = table.querySelectorAll('thead th, thead td, tr:first-child th, tr:first-child td');
                     
                     for (var h = 0; h < headerCells.length; h++) {
                         headers.push(headerCells[h].textContent.toLowerCase().trim());
                     }
                     
+                    console.log('Table ' + t + ' headers: ' + headers.join(', '));
+                    
+                    // 헤더가 없거나 너무 적으면 스킵
+                    if (headers.length < 2) continue;
+                    
                     var titleCol = -1, dueCol = -1;
+                    
+                    // 과제 컬럼 찾기 (보통 두 번째 컬럼)
                     for (var i = 0; i < headers.length; i++) {
                         if (headers[i].includes('과제') || headers[i].includes('assignment') || 
-                            headers[i].includes('활동') || headers[i].includes('activity')) {
+                            headers[i].includes('활동') || headers[i] === '과제') {
                             titleCol = i;
-                        }
-                        if (headers[i].includes('종료') || headers[i].includes('마감') || 
-                            headers[i].includes('due') || headers[i].includes('마감일')) {
-                            dueCol = i;
+                            break;
                         }
                     }
                     
-                    if (titleCol >= 0 && dueCol >= 0) {
+                    // 못 찾으면 두 번째 컬럼 시도 (0번은 주차, 1번이 과제명인 경우가 많음)
+                    if (titleCol === -1 && headers.length > 1) {
+                        if (headers[0].includes('주') || headers[0].includes('week')) {
+                            titleCol = 1;
+                        } else {
+                            titleCol = 0;
+                        }
+                    }
+                    
+                    // 종료 일시 컬럼 찾기
+                    for (var i = 0; i < headers.length; i++) {
+                        if (headers[i].includes('종료') || headers[i].includes('마감') || 
+                            headers[i].includes('due') || headers[i].includes('끝')) {
+                            dueCol = i;
+                            break;
+                        }
+                    }
+                    
+                    // 시작 일시 다음이 종료 일시일 가능성
+                    if (dueCol === -1) {
+                        for (var i = 0; i < headers.length - 1; i++) {
+                            if (headers[i].includes('시작')) {
+                                dueCol = i + 1;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 그래도 없으면 2번째 또는 3번째 컬럼 시도
+                    if (dueCol === -1 && headers.length >= 3) {
+                        dueCol = 2; // 보통 3번째 컬럼이 종료일시
+                    }
+                    
+                    console.log('Using title column: ' + titleCol + ', due column: ' + dueCol);
+                    
+                    if (titleCol >= 0) {
                         var rows = table.querySelectorAll('tbody tr');
                         if (rows.length === 0) {
-                            rows = table.querySelectorAll('tr');
+                            rows = table.querySelectorAll('tr').length > 1 ? 
+                                   Array.from(table.querySelectorAll('tr')).slice(1) : [];
                         }
+                        
+                        console.log('Processing ' + rows.length + ' rows');
                         
                         for (var r = 0; r < rows.length; r++) {
                             var cells = rows[r].querySelectorAll('td');
-                            if (cells.length > Math.max(titleCol, dueCol)) {
-                                var link = cells[titleCol].querySelector('a[href]');
+                            if (cells.length > titleCol) {
+                                var titleCell = cells[titleCol];
+                                var link = titleCell.querySelector('a[href*="/mod/assign/"]');
+                                
                                 if (link) {
                                     var title = link.textContent.trim();
                                     var url = link.href;
-                                    var due = cells[dueCol].textContent.trim();
+                                    var due = (dueCol >= 0 && cells[dueCol]) ? 
+                                             cells[dueCol].textContent.trim() : '';
                                     
-                                    assignments.push({
-                                        title: title,
-                                        url: url,
-                                        due: due
-                                    });
+                                    if (title && title !== '-' && due && due !== '-' && due !== '') {
+                                        console.log('Found assignment: ' + title + ' (due: ' + due + ')');
+                                        assignments.push({
+                                            title: title,
+                                            url: url,
+                                            due: due
+                                        });
+                                    } else if (title) {
+                                        console.log('Skipping assignment without due date: ' + title);
+                                    }
                                 }
                             }
                         }
-                        break; // 첫 번째 유효한 테이블만 처리
                     }
                 }
                 
+                // 방법 2: 과제 리스트 div에서 찾기 (마감일 없으면 스킵)
+                // 이 방법은 백업용이므로 주석 처리
+                /*
+                var assignDivs = document.querySelectorAll('.assign-name a, .activity.assign a');
+                assignDivs.forEach(function(link) {
+                    var title = link.textContent.trim();
+                    var url = link.href;
+                    
+                    // 중복 체크
+                    var exists = assignments.some(function(a) {
+                        return a.title === title;
+                    });
+                    
+                    if (!exists && title) {
+                        console.log('Found assignment from div (no due date): ' + title);
+                    }
+                });
+                */
+                
+                console.log('Total assignments found: ' + assignments.length);
                 return JSON.stringify(assignments);
             })();
             """
@@ -385,6 +466,8 @@ class LMSWebCrawler: NSObject, ObservableObject {
                     if let json = result as? String,
                        let data = json.data(using: .utf8),
                        let assignments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                        
+                        print("📋 Assignment table found \(assignments.count) items for \(cleanedCourseName)")
                         
                         for assign in assignments {
                             if let title = assign["title"] as? String,
@@ -478,6 +561,42 @@ class LMSWebCrawler: NSObject, ObservableObject {
                     }
                 });
                 
+                // 과제도 찾기 (과목 페이지에서)
+                var assignItems = document.querySelectorAll('li.activity.assign.modtype_assign');
+                console.log('Found ' + assignItems.length + ' assignments in course page');
+                
+                assignItems.forEach(function(item) {
+                    var link = item.querySelector('.activityinstance a[href]');
+                    var titleEl = item.querySelector('.activityinstance .instancename');
+                    var availabilityEl = item.querySelector('.availability-info');
+                    
+                    if (titleEl && link) {
+                        var title = titleEl.textContent.trim();
+                        title = title.replace(/과제$/, '').trim();
+                        
+                        // 마감일 추출 시도
+                        var due = null;
+                        if (availabilityEl) {
+                            var availText = availabilityEl.textContent;
+                            // "~까지" 패턴 찾기
+                            var dueMatch = availText.match(/(\\d{4}년 \\d{1,2}월 \\d{1,2}일.*?까지)/);
+                            if (dueMatch) {
+                                due = dueMatch[1];
+                                console.log('Found due date for ' + title + ': ' + due);
+                            }
+                        }
+                        
+                        vods.push({
+                            title: title,
+                            url: link.href,
+                            due: due,
+                            isAssignment: true
+                        });
+                        
+                        console.log('Found assignment in course page: ' + title);
+                    }
+                });
+                
                 return JSON.stringify(vods);
             })();
             """
@@ -491,18 +610,36 @@ class LMSWebCrawler: NSObject, ObservableObject {
                         if let title = vod["title"] as? String {
                             let url = vod["url"] as? String
                             let due = vod["due"] as? String
+                            let isAssignment = vod["isAssignment"] as? Bool ?? false
                             
                             // vivado 관련 항목 디버깅
                             if title.lowercased().contains("vivado") {
-                                print("🔍 Found vivado VOD: '\(title)' in course: '\(cleanedCourseName)'")
+                                print("🔍 Found vivado \(isAssignment ? "assignment" : "VOD"): '\(title)' in course: '\(cleanedCourseName)'")
+                            }
+                            
+                            // 객체지향프로그래밍기초 과제 디버깅
+                            if cleanedCourseName.contains("객체지향프로그래밍기초") && isAssignment {
+                                print("✅ Found 객체지향프로그래밍기초 assignment: '\(title)' with due: \(due ?? "no due date")")
+                            }
+                            
+                            // 마감일 정규화
+                            var normalizedDue: String? = nil
+                            if due != nil && due != "" {
+                                normalizedDue = self?.normalizeDueDate(due)
+                            }
+                            
+                            // 과제인데 마감일이 없으면 건너뛰기
+                            if isAssignment && normalizedDue == nil {
+                                print("⚠️ Skipping assignment '\(title)' - no valid due date")
+                                continue
                             }
                             
                             let item = CrawlData.Item(
-                                type: "class",
+                                type: isAssignment ? "assignment" : "class",
                                 courseName: cleanedCourseName,
                                 title: title,
                                 url: nil,  // URL 전송하지 않음 (개인정보 보호)
-                                due: self?.normalizeDueDate(due),
+                                due: normalizedDue,
                                 remainingSeconds: nil
                             )
                             self?.items.append(item)
@@ -520,6 +657,115 @@ class LMSWebCrawler: NSObject, ObservableObject {
     /// 대시보드 데이터 추출 (폴백)
     private func extractDashboardData() {
         statusMessage = "대시보드 데이터 수집 중..."
+        
+        // 대시보드에서 upcoming assignments 가져오기
+        let dashboardScript = """
+            (function() {
+                var assignments = [];
+                
+                // 방법 1: 타임라인 블록에서 과제 찾기
+                var timelineItems = document.querySelectorAll('.block_timeline .timeline-event-list li');
+                timelineItems.forEach(function(item) {
+                    var link = item.querySelector('a[href*="/mod/assign/"]');
+                    if (link) {
+                        var title = link.textContent.trim();
+                        var url = link.href;
+                        
+                        // 마감일과 과목명 추출
+                        var text = item.textContent;
+                        var courseMatch = text.match(/\\[([^\\]]+)\\]/);
+                        var courseName = courseMatch ? courseMatch[1] : 'Unknown';
+                        
+                        // 날짜 패턴 찾기
+                        var dateMatch = text.match(/(\\d{4}년 \\d{1,2}월 \\d{1,2}일[^,]*)/);
+                        var due = dateMatch ? dateMatch[1] : null;
+                        
+                        assignments.push({
+                            title: title,
+                            url: url,
+                            due: due,
+                            courseName: courseName
+                        });
+                        
+                        console.log('Timeline assignment: ' + title + ' (' + courseName + ') due: ' + due);
+                    }
+                });
+                
+                // 방법 2: myoverview 블록에서 과제 찾기
+                var overviewItems = document.querySelectorAll('.block_myoverview .event-list-item');
+                overviewItems.forEach(function(item) {
+                    var link = item.querySelector('a[href*="/mod/assign/"]');
+                    if (link) {
+                        var title = link.textContent.trim();
+                        var url = link.href;
+                        
+                        var courseEl = item.querySelector('.text-muted');
+                        var courseName = courseEl ? courseEl.textContent.trim() : 'Unknown';
+                        
+                        var dueEl = item.querySelector('.text-right, .event-time');
+                        var due = dueEl ? dueEl.textContent.trim() : null;
+                        
+                        // 중복 체크
+                        var exists = assignments.some(function(a) {
+                            return a.title === title && a.courseName === courseName;
+                        });
+                        
+                        if (!exists) {
+                            assignments.push({
+                                title: title,
+                                url: url,
+                                due: due,
+                                courseName: courseName
+                            });
+                            
+                            console.log('Overview assignment: ' + title + ' (' + courseName + ') due: ' + due);
+                        }
+                    }
+                });
+                
+                return JSON.stringify(assignments);
+            })();
+            """
+        
+        webView.evaluateJavaScript(dashboardScript) { [weak self] result, error in
+            if let json = result as? String,
+               let data = json.data(using: .utf8),
+               let assignments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                
+                for assign in assignments {
+                    if let title = assign["title"] as? String,
+                       let courseName = assign["courseName"] as? String {
+                        let due = assign["due"] as? String
+                        
+                        let cleanedCourseName = self?.cleanCourseName(courseName) ?? courseName
+                        
+                        // 대시보드에서 찾은 모든 과제 추가
+                        print("🎯 Found assignment in dashboard: '\(title)' for '\(cleanedCourseName)'")
+                        
+                        if let normalizedDue = self?.normalizeDueDate(due) {
+                            let item = CrawlData.Item(
+                                type: "assignment",
+                                courseName: cleanedCourseName,
+                                title: title,
+                                url: nil,
+                                due: normalizedDue,
+                                remainingSeconds: nil
+                            )
+                            self?.items.append(item)
+                        } else {
+                            print("⚠️ Dashboard assignment '\(title)' has no valid due date")
+                        }
+                    }
+                }
+            }
+            
+            // 기존 로직 계속...
+            self?.extractCoursesFromDashboard()
+        }
+    }
+    
+    /// 대시보드에서 과목 목록 추출 (기존 로직)
+    private func extractCoursesFromDashboard() {
         progress = 0.7
         
         let dashboardScript = """

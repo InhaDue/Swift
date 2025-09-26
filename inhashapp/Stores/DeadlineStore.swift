@@ -9,6 +9,7 @@ struct AssignmentItem: Identifiable, Codable, Hashable {
     let title: String
     let url: String?
     let dueAt: Date
+    var completed: Bool = false
 }
 
 class DeadlineStore: ObservableObject {
@@ -16,8 +17,32 @@ class DeadlineStore: ObservableObject {
     @Published var todayDeadlines: [AssignmentItem] = []
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var dateFilter: DateFilter = .all
 
     private var cancellables = Set<AnyCancellable>()
+    
+    enum DateFilter: String, CaseIterable {
+        case oneDay = "1일"
+        case threeDays = "3일"
+        case sevenDays = "7일"
+        case all = "전체"
+        
+        var days: Int? {
+            switch self {
+            case .oneDay: return 1
+            case .threeDays: return 3
+            case .sevenDays: return 7
+            case .all: return nil
+            }
+        }
+    }
+    
+    var filteredDeadlines: [AssignmentItem] {
+        guard let days = dateFilter.days else { return allDeadlines }
+        
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        return allDeadlines.filter { $0.dueAt <= cutoffDate }
+    }
 
     init() {
         // 초기화 시 데이터 로드는 View에서 처리
@@ -29,6 +54,7 @@ class DeadlineStore: ObservableObject {
               let title = item["title"] as? String else { return nil }
         
         let url = item["url"] as? String
+        let completed = item["completed"] as? Bool ?? false
         
         // Date 파싱 - 다양한 형식 지원
         var dueAt: Date?
@@ -56,7 +82,8 @@ class DeadlineStore: ObservableObject {
             courseName: courseName,
             title: title,
             url: url,
-            dueAt: finalDueAt
+            dueAt: finalDueAt,
+            completed: completed
         )
     }
 
@@ -179,6 +206,43 @@ class DeadlineStore: ObservableObject {
                 self.errorMessage = "Network error fetching today's deadlines: \(error.localizedDescription)"
                 self.isLoading = false
             }
+        }
+    }
+    
+    func toggleCompletion(for item: AssignmentItem, studentId: Int) async {
+        guard let baseURL = URL(string: AppConfig.baseURL) else { return }
+        
+        let endpoint = item.type == "assignment" ? "assignment" : "lecture"
+        let url = baseURL.appendingPathComponent("api/completion/\(endpoint)/\(item.id)/toggle")
+        
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "studentId", value: String(studentId))]
+        
+        guard let finalURL = components?.url else { return }
+        
+        var request = URLRequest(url: finalURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool,
+               let completed = json["completed"] as? Bool,
+               success {
+                
+                // 로컬 상태 업데이트
+                await MainActor.run {
+                    if let index = allDeadlines.firstIndex(where: { $0.id == item.id }) {
+                        allDeadlines[index].completed = completed
+                    }
+                    if let index = todayDeadlines.firstIndex(where: { $0.id == item.id }) {
+                        todayDeadlines[index].completed = completed
+                    }
+                }
+            }
+        } catch {
+            print("Error toggling completion: \(error)")
         }
     }
 }

@@ -6,7 +6,7 @@ struct HomeView: View {
     @State private var selectedFilter: ScheduleFilter = .all
 
     private var filteredItems: [AssignmentItem] {
-        let base = deadlineStore.allDeadlines.sorted { $0.dueAt < $1.dueAt }
+        let base = deadlineStore.filteredDeadlines.sorted { $0.dueAt < $1.dueAt }
         switch selectedFilter {
         case .all: return base
         case .assignment: return base.filter { $0.type == "assignment" }
@@ -19,6 +19,19 @@ struct HomeView: View {
             AppBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
+                    
+                    // 날짜 필터
+                    HStack {
+                        Spacer()
+                        Picker("", selection: $deadlineStore.dateFilter) {
+                            ForEach(DeadlineStore.DateFilter.allCases, id: \.self) { filter in
+                                Text(filter.rawValue).tag(filter)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .frame(maxWidth: 280)
+                    }
+                    .padding(.horizontal)
                     
                     SectionHeader(title: "다가오는 일정")
                     FilterBar(selected: $selectedFilter)
@@ -36,7 +49,7 @@ struct HomeView: View {
                     } else {
                         LazyVStack(spacing: 12) {
                             ForEach(filteredItems) { item in
-                                ScheduleCard(item: item)
+                                ScheduleCard(item: item, deadlineStore: deadlineStore, studentId: auth.studentId ?? 0)
                             }
                         }
                     }
@@ -126,6 +139,8 @@ private struct FilterChip: View {
 
 private struct ScheduleCard: View {
     let item: AssignmentItem
+    let deadlineStore: DeadlineStore
+    let studentId: Int
     
     private var timeRemaining: String {
         let now = Date()
@@ -148,19 +163,33 @@ private struct ScheduleCard: View {
     
     var body: some View {
         HStack(spacing: 12) {
+            // 완료 체크박스
+            Button(action: {
+                Task {
+                    await deadlineStore.toggleCompletion(for: item, studentId: studentId)
+                }
+            }) {
+                Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(item.completed ? .green : .gray)
+                    .font(.system(size: 22))
+            }
+            
             Circle()
                 .fill(item.type == "assignment" ? Color.orange : Color.blue)
                 .frame(width: 10, height: 10)
+                .opacity(item.completed ? 0.5 : 1.0)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundColor(item.completed ? .gray : .primary)
                     .lineLimit(1)
+                    .strikethrough(item.completed)
                 
                 Text(item.courseName)
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
+                    .opacity(item.completed ? 0.6 : 1.0)
             }
             
             Spacer()

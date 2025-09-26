@@ -53,7 +53,7 @@ struct CalendarView: View {
                 MonthlySummaryCard(monthItems: monthItems)
                     .padding(.horizontal, 16)
                 
-                DayDueListCard(date: selectedDate, items: dayItems())
+                DayDueListCard(date: selectedDate, items: dayItems(), deadlineStore: deadlineStore, studentId: auth.studentId ?? 0)
                     .padding(.horizontal, 16)
                 
                 Spacer(minLength: 0)
@@ -349,6 +349,8 @@ private struct MonthlySummaryCard: View {
 private struct DayDueListCard: View {
     let date: Date
     let items: [AssignmentItem]
+    let deadlineStore: DeadlineStore
+    let studentId: Int
     
     private var dateString: String {
         let f = DateFormatter()
@@ -373,25 +375,40 @@ private struct DayDueListCard: View {
                 VStack(spacing: 8) {
                     ForEach(items) { item in
                         HStack {
+                            // 완료 체크박스
+                            Button(action: {
+                                Task {
+                                    await deadlineStore.toggleCompletion(for: item, studentId: studentId)
+                                }
+                            }) {
+                                Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(item.completed ? .green : .gray)
+                                    .font(.system(size: 20))
+                            }
+                            
                             Image(systemName: item.type == "assignment" ? "doc.text" : "video")
                                 .foregroundColor(item.type == "assignment" ? .orange : .blue)
                                 .font(.system(size: 14))
                                 .frame(width: 20)
+                                .opacity(item.completed ? 0.5 : 1.0)
                             
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
                                     .font(.system(size: 14, weight: .medium))
                                     .lineLimit(1)
+                                    .foregroundColor(item.completed ? .gray : .primary)
+                                    .strikethrough(item.completed)
                                 Text(item.courseName)
                                     .font(.system(size: 12))
                                     .foregroundColor(.secondary)
+                                    .opacity(item.completed ? 0.6 : 1.0)
                             }
                             
                             Spacer()
                             
                             Text(formatTime(item.dueAt))
                                 .font(.system(size: 12))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(item.completed ? .gray : .secondary)
                         }
                         .padding(.vertical, 4)
                     }
