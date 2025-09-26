@@ -80,6 +80,67 @@ class LMSWebCrawler: NSObject, ObservableObject {
         self.webView.navigationDelegate = self
     }
     
+    /// 백그라운드에서 크롤링 수행 (UI 없이)
+    func performBackgroundCrawl(username: String, password: String) async -> Result<CrawlData, Error> {
+        return await withCheckedContinuation { continuation in
+            // 메인 스레드에서 WebView 크롤링 수행
+            Task { @MainActor in
+                // 크롤링 시작
+                self.startCrawling(username: username, password: password) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+    }
+    
+    /// 크롤링 데이터를 서버로 전송
+    func submitCrawlData(_ crawlData: CrawlData, studentId: Int) async -> Result<Void, Error> {
+        guard let url = URL(string: "\(AppConfig.baseURL)/api/crawl/submit/\(studentId)") else {
+            return .failure(NSError(domain: "LMSCrawler", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // AuthStore에서 토큰 가져오기
+        if let token = UserDefaults.standard.string(forKey: "authToken") {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            request.httpBody = try encoder.encode(crawlData)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 200 {
+                    return .success(())
+                } else {
+                    // 에러 응답 파싱
+                    if let errorData = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                        return .failure(NSError(domain: "LMSCrawler", code: httpResponse.statusCode, 
+                                              userInfo: [NSLocalizedDescriptionKey: errorData.error]))
+                    }
+                    return .failure(NSError(domain: "LMSCrawler", code: httpResponse.statusCode, 
+                                          userInfo: [NSLocalizedDescriptionKey: "Server error: \(httpResponse.statusCode)"]))
+                }
+            }
+            
+            return .failure(NSError(domain: "LMSCrawler", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
+            
+        } catch {
+            return .failure(error)
+        }
+    }
+    
+    struct ErrorResponse: Codable {
+        let success: Bool
+        let error: String
+    }
+    
     /// LMS 크롤링 시작
     func startCrawling(username: String, password: String, completion: @escaping (Result<CrawlData, Error>) -> Void) {
         self.completion = completion
@@ -198,6 +259,12 @@ class LMSWebCrawler: NSObject, ObservableObject {
     private func handleLoginSuccess() {
         guard !isCrawling else { return }
         isCrawling = true
+        
+        // 로그인 성공 시 계정 정보를 Keychain에 저장
+        if let username = currentUsername, let password = currentPassword {
+            _ = KeychainHelper.shared.saveLMSCredentials(username: username, password: password)
+        }
+        
         extractCourses()
     }
     

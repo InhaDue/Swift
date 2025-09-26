@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct SettingsView: View {
     @EnvironmentObject private var auth: AuthStore
@@ -13,6 +14,8 @@ struct SettingsView: View {
     @State private var isSyncing = false
     @State private var lastSyncDate: Date? = nil
     @State private var syncMessage: String? = nil
+    @State private var syncProgress: Double = 0.0
+    @State private var syncStatusMessage: String = ""
     @State private var showingDeleteAccountAlert = false
     @State private var showingDeleteAccountConfirmation = false
     
@@ -41,7 +44,11 @@ struct SettingsView: View {
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundColor(.white)
                                     
-                                    if let lastSync = lastSyncDate {
+                                    if isSyncing {
+                                        Text(syncStatusMessage)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    } else if let lastSync = lastSyncDate {
                                         Text("마지막 동기화: \(lastSync, formatter: relativeDateFormatter)")
                                             .font(.system(size: 12))
                                             .foregroundColor(.white.opacity(0.8))
@@ -78,11 +85,32 @@ struct SettingsView: View {
                         }
                         .disabled(isSyncing)
                         
+                        // 프로그레스 바 추가
+                        if isSyncing {
+                            VStack(spacing: 8) {
+                                ProgressView(value: syncProgress)
+                                    .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                                    .frame(height: 6)
+                                    .background(Color.gray.opacity(0.2))
+                                    .cornerRadius(3)
+                                    .animation(.easeInOut(duration: 0.3), value: syncProgress)
+                                
+                                HStack {
+                                    Text("\(Int(syncProgress * 100))%")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                        }
+                        
                         if let message = syncMessage {
                             Text(message)
                                 .font(.system(size: 13))
                                 .foregroundColor(message.contains("성공") ? .green : .secondary)
                                 .multilineTextAlignment(.center)
+                                .transition(.opacity)
                         }
                     }
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -211,31 +239,137 @@ struct SettingsView: View {
         await MainActor.run {
             isSyncing = true
             syncMessage = nil
+            syncProgress = 0.0
+            syncStatusMessage = "동기화 준비 중..."
         }
         
-        // LMS 웹뷰를 통해 데이터 크롤링
-        // 여기서는 간단히 시뮬레이션
+        // 부드러운 프로그레스 애니메이션을 위한 타이머
+        let progressTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+        let cancellable = progressTimer.sink { _ in
+            if self.isSyncing && self.syncProgress < 0.9 {
+                self.syncProgress += 0.01
+            }
+        }
+        
         do {
-            // 실제로는 LMSWebCrawler를 통해 데이터를 가져와야 함
-            try await Task.sleep(nanoseconds: 2_000_000_000) // 2초 대기 시뮬레이션
-            
+            // LMS 계정 정보 가져오기 (Keychain에서)
             await MainActor.run {
-                isSyncing = false
-                lastSyncDate = Date()
-                syncMessage = "✓ 동기화 완료! 새로운 과제 3개, 수업 2개 추가됨"
+                syncProgress = 0.1
+                syncStatusMessage = "계정 정보 확인 중..."
             }
             
-            // 3초 후 메시지 제거
-            try await Task.sleep(nanoseconds: 3_000_000_000)
-            await MainActor.run {
-                syncMessage = nil
+            guard let lmsCredentials = KeychainHelper.shared.getLMSCredentials() else {
+                await MainActor.run {
+                    isSyncing = false
+                    syncProgress = 0.0
+                    syncMessage = "LMS 계정 정보가 없습니다. 계정을 다시 연결해주세요."
+                }
+                cancellable.cancel()
+                return
             }
+            
+            // LMSWebCrawler 인스턴스 생성
+            let crawler = LMSWebCrawler()
+            
+            // 백그라운드에서 크롤링 수행
+            await MainActor.run {
+                syncProgress = 0.2
+                syncStatusMessage = "LMS 서버 연결 중..."
+            }
+            
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5초
+            
+            await MainActor.run {
+                syncProgress = 0.3
+                syncStatusMessage = "로그인 처리 중..."
+            }
+            
+            // 로그인 및 크롤링
+            let crawlResult = await crawler.performBackgroundCrawl(
+                username: lmsCredentials.username,
+                password: lmsCredentials.password
+            )
+            
+            switch crawlResult {
+            case .success(let crawlData):
+                await MainActor.run {
+                    syncProgress = 0.5
+                    syncStatusMessage = "과목 정보 수집 중..."
+                }
+                
+                try await Task.sleep(nanoseconds: 500_000_000)
+                
+                await MainActor.run {
+                    syncProgress = 0.6
+                    syncStatusMessage = "과제 데이터 불러오는 중..."
+                }
+                
+                try await Task.sleep(nanoseconds: 500_000_000)
+                
+                await MainActor.run {
+                    syncProgress = 0.7
+                    syncStatusMessage = "수업 일정 확인 중..."
+                }
+                
+                try await Task.sleep(nanoseconds: 500_000_000)
+                
+                // 서버로 데이터 전송
+                await MainActor.run {
+                    syncProgress = 0.8
+                    syncStatusMessage = "서버에 데이터 전송 중..."
+                }
+                
+                let submitResult = await crawler.submitCrawlData(crawlData, studentId: studentId)
+                
+                switch submitResult {
+                case .success:
+                    await MainActor.run {
+                        syncProgress = 1.0
+                        syncStatusMessage = "동기화 완료!"
+                    }
+                    
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                    
+                    await MainActor.run {
+                        isSyncing = false
+                        syncProgress = 0.0
+                        lastSyncDate = Date()
+                        let assignmentCount = crawlData.items.filter { $0.type == "assignment" }.count
+                        let classCount = crawlData.items.filter { $0.type == "class" }.count
+                        syncMessage = "✓ 동기화 완료! 과제 \(assignmentCount)개, 수업 \(classCount)개 업데이트됨"
+                    }
+                    
+                    // 3초 후 메시지 제거
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                    await MainActor.run {
+                        syncMessage = nil
+                    }
+                    
+                case .failure(let error):
+                    await MainActor.run {
+                        isSyncing = false
+                        syncProgress = 0.0
+                        syncMessage = "서버 전송 실패: \(error.localizedDescription)"
+                    }
+                }
+                
+            case .failure(let error):
+                await MainActor.run {
+                    isSyncing = false
+                    syncProgress = 0.0
+                    syncMessage = "크롤링 실패: \(error.localizedDescription)"
+                }
+            }
+            
         } catch {
             await MainActor.run {
                 isSyncing = false
-                syncMessage = "동기화 실패. 다시 시도해주세요."
+                syncProgress = 0.0
+                syncMessage = "동기화 실패: \(error.localizedDescription)"
             }
         }
+        
+        cancellable.cancel()
     }
     
     private func deleteAndReconnect() async {
