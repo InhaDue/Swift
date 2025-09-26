@@ -7,37 +7,22 @@ struct SettingsView: View {
     @AppStorage("notifyAll") private var notifyAll: Bool = true
     @AppStorage("ddayOption") private var ddayOption: Int = 1
     @State private var showingReconnectAlert = false
+    @State private var showingReconnectConfirmation = false
     @State private var showingLmsWebView = false
     @State private var isDeleting = false
     @State private var isSyncing = false
     @State private var lastSyncDate: Date? = nil
     @State private var syncMessage: String? = nil
+    @State private var showingDeleteAccountAlert = false
+    @State private var showingDeleteAccountConfirmation = false
     
     let ddayOptions: [Int] = [3, 2, 1]
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("알림 설정")) {
-                    Toggle("과제 알림", isOn: $notifyAssignments)
-                    Toggle("수업 알림", isOn: $notifyLectures)
-                    Toggle("전체 알림", isOn: $notifyAll)
-                        .onChange(of: notifyAll) { _, newValue in
-                            notifyAssignments = newValue
-                            notifyLectures = newValue
-                        }
-                    Picker("사전 알림(D-일)", selection: $ddayOption) { 
-                        ForEach(ddayOptions, id: \.self) { d in 
-                            Text("D-\(d)").tag(d) 
-                        } 
-                    }
-                    Text("사전 알림은 매일 09:00시에 울립니다. 예: 과제 마감이 9월 25일인 경우, D-2로 설정하면 9월 23일 09:00에 알림이 울립니다.")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                
-                Section(header: Text("데이터 동기화")) {
+                // 1. 데이터 동기화 섹션 (최상단)
+                Section {
                     VStack(spacing: 12) {
                         Button(action: {
                             Task {
@@ -104,13 +89,35 @@ struct SettingsView: View {
                     .listRowBackground(Color.clear)
                 }
                 
-                Section(header: Text("계정")) {
+                // 2. 알림 설정 섹션
+                Section(header: Text("알림 설정")) {
+                    Toggle("과제 알림", isOn: $notifyAssignments)
+                    Toggle("수업 알림", isOn: $notifyLectures)
+                    Toggle("전체 알림", isOn: $notifyAll)
+                        .onChange(of: notifyAll) { _, newValue in
+                            notifyAssignments = newValue
+                            notifyLectures = newValue
+                        }
+                    Picker("사전 알림(D-일)", selection: $ddayOption) { 
+                        ForEach(ddayOptions, id: \.self) { d in 
+                            Text("D-\(d)").tag(d) 
+                        } 
+                    }
+                    Text("사전 알림은 매일 09:00시에 울립니다. 예: 과제 마감이 9월 25일인 경우, D-2로 설정하면 9월 23일 09:00에 알림이 울립니다.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                
+                // 3. 계정 관리 섹션
+                Section(header: Text("계정 관리")) {
+                    // LMS 계정 변경
                     Button(action: {
                         showingReconnectAlert = true
                     }) {
                         HStack {
                             Label("인하대학교 계정 변경", systemImage: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.primary)
+                                .foregroundColor(.orange)
                             Spacer()
                             if isDeleting {
                                 ProgressView()
@@ -121,28 +128,69 @@ struct SettingsView: View {
                     }
                     .disabled(isDeleting)
                     
-                    Button(role: .destructive) { 
-                        auth.logout() 
-                    } label: { 
-                        Label("로그아웃", systemImage: "rectangle.portrait.and.arrow.forward") 
+                    // 로그아웃
+                    Button(action: {
+                        auth.logout()
+                    }) {
+                        Label("로그아웃", systemImage: "rectangle.portrait.and.arrow.forward")
+                            .foregroundColor(.primary)
                     }
                     
-                    Button(role: .destructive) { } label: { 
-                        Label("계정 탈퇴", systemImage: "trash") 
+                    // 계정 탈퇴
+                    Button(role: .destructive, action: {
+                        showingDeleteAccountAlert = true
+                    }) {
+                        Label("계정 탈퇴", systemImage: "trash")
                     }
                 }
             }
             .navigationTitle("설정")
+            
+            // LMS 계정 변경 확인 Alert
             .alert("인하대학교 계정 변경", isPresented: $showingReconnectAlert) {
                 Button("취소", role: .cancel) { }
                 Button("계속", role: .destructive) {
+                    showingReconnectConfirmation = true
+                }
+            } message: {
+                Text("LMS 계정을 변경하시겠습니까?\n\n⚠️ 주의: 현재 저장된 모든 과제와 수업 정보가 삭제됩니다.")
+            }
+            
+            // LMS 계정 변경 최종 확인 Alert
+            .alert("정말 변경하시겠습니까?", isPresented: $showingReconnectConfirmation) {
+                Button("취소", role: .cancel) { }
+                Button("모든 데이터 삭제 후 변경", role: .destructive) {
                     Task {
                         await deleteAndReconnect()
                     }
                 }
             } message: {
-                Text("기존 LMS 계정에서 로그아웃되며, 현재 저장된 모든 강의, 과제, 수업 정보가 삭제됩니다. 계속하시겠습니까?")
+                Text("이 작업은 되돌릴 수 없습니다.\n\n삭제되는 데이터:\n• 모든 과제 정보\n• 모든 수업 정보\n• 완료 상태 기록")
             }
+            
+            // 계정 탈퇴 확인 Alert
+            .alert("계정 탈퇴", isPresented: $showingDeleteAccountAlert) {
+                Button("취소", role: .cancel) { }
+                Button("계속", role: .destructive) {
+                    showingDeleteAccountConfirmation = true
+                }
+            } message: {
+                Text("정말 계정을 탈퇴하시겠습니까?\n\n⚠️ 주의: 모든 데이터가 영구적으로 삭제됩니다.")
+            }
+            
+            // 계정 탈퇴 최종 확인 Alert
+            .alert("최종 확인", isPresented: $showingDeleteAccountConfirmation) {
+                Button("취소", role: .cancel) { }
+                Button("계정 영구 삭제", role: .destructive) {
+                    Task {
+                        await deleteAccount()
+                    }
+                }
+            } message: {
+                Text("이 작업은 되돌릴 수 없습니다.\n\n영구 삭제되는 데이터:\n• 계정 정보\n• 모든 과제 정보\n• 모든 수업 정보\n• 설정 및 기록")
+            }
+            
+            // LMS WebView
             .sheet(isPresented: $showingLmsWebView) {
                 LmsReconnectView()
             }
@@ -201,7 +249,7 @@ struct SettingsView: View {
         let deleteUrl = URL(string: "\(AppConfig.baseURL)/api/crawl/delete/\(studentId)")!
         var request = URLRequest(url: deleteUrl)
         request.httpMethod = "DELETE"
-        request.setValue("Bearer \(auth.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(auth.token ?? "")", forHTTPHeaderField: "Authorization")
         
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
@@ -211,78 +259,105 @@ struct SettingsView: View {
                 // 삭제 성공 - LMS 재연결 화면 표시
                 await MainActor.run {
                     isDeleting = false
-                    // LMS 연결 상태 초기화
                     auth.setLmsLinked(false)
-                    // WebView 표시
                     showingLmsWebView = true
                 }
             } else {
                 await MainActor.run {
                     isDeleting = false
+                    // 에러 처리
                 }
             }
         } catch {
-            print("Failed to delete data: \(error)")
             await MainActor.run {
                 isDeleting = false
+                print("Delete error: \(error)")
+            }
+        }
+    }
+    
+    private func deleteAccount() async {
+        guard let studentId = auth.studentId else { return }
+        
+        await MainActor.run {
+            isDeleting = true
+        }
+        
+        // 1. 먼저 모든 과제/수업 데이터 삭제
+        let deleteDataUrl = URL(string: "\(AppConfig.baseURL)/api/crawl/delete/\(studentId)")!
+        var deleteDataRequest = URLRequest(url: deleteDataUrl)
+        deleteDataRequest.httpMethod = "DELETE"
+        deleteDataRequest.setValue("Bearer \(auth.token ?? "")", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (_, deleteResponse) = try await URLSession.shared.data(for: deleteDataRequest)
+            
+            if let httpResponse = deleteResponse as? HTTPURLResponse, 
+               httpResponse.statusCode == 200 {
+                
+                // 2. 계정 삭제
+                let deleteAccountUrl = URL(string: "\(AppConfig.baseURL)/api/auth/delete")!
+                var deleteAccountRequest = URLRequest(url: deleteAccountUrl)
+                deleteAccountRequest.httpMethod = "DELETE"
+                deleteAccountRequest.setValue("Bearer \(auth.token ?? "")", forHTTPHeaderField: "Authorization")
+                deleteAccountRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                
+                let body = ["studentId": studentId]
+                deleteAccountRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+                
+                let (_, accountResponse) = try await URLSession.shared.data(for: deleteAccountRequest)
+                
+                if let httpResponse = accountResponse as? HTTPURLResponse, 
+                   httpResponse.statusCode == 200 {
+                    // 계정 삭제 성공 - 로그아웃
+                    await MainActor.run {
+                        isDeleting = false
+                        auth.logout()
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                isDeleting = false
+                print("Delete account error: \(error)")
             }
         }
     }
 }
 
-// LMS 재연결을 위한 래퍼 뷰
+// LMS 재연결 뷰
 struct LmsReconnectView: View {
-    @EnvironmentObject private var auth: AuthStore
+    @EnvironmentObject var auth: AuthStore
+    @StateObject private var crawler = LMSWebCrawler()
     @Environment(\.dismiss) private var dismiss
-    @State private var showingOnboarding = false
+    @State private var showDataLoading = false
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 30) {
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
-                    .padding(.top, 50)
-                
-                VStack(spacing: 16) {
-                    Text("인하대학교 계정 재연결")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    Text("새로운 LMS 계정으로 로그인하여\n강의 정보를 다시 불러옵니다.")
-                        .multilineTextAlignment(.center)
+            if showDataLoading {
+                // 크롤링 완료 후 데이터 처리
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                    Text("데이터 처리 중...")
+                        .font(.headline)
+                    Text("잠시만 기다려주세요")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                
-                Spacer()
-                
-                Button(action: {
-                    showingOnboarding = true
-                }) {
-                    HStack {
-                        Image(systemName: "safari")
-                        Text("LMS 로그인")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 30)
-            }
-            .navigationBarItems(
-                leading: Button("취소") {
-                    dismiss()
-                }
-            )
-            .fullScreenCover(isPresented: $showingOnboarding) {
-                // OnboardingFlow를 재사용하여 LMS 연결 처리
-                OnboardingFlow()
-                    .onDisappear {
+                .onAppear {
+                    Task {
+                        // 데이터 처리 완료 후 dismiss
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
                         dismiss()
                     }
+                }
+            } else {
+                WebLoginView(crawler: crawler) {
+                    // 크롤링 성공
+                    auth.setLmsLinked(true)
+                    showDataLoading = true
+                }
             }
         }
     }
