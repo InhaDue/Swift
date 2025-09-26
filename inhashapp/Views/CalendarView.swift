@@ -9,10 +9,8 @@ struct CalendarView: View {
     @State private var showingAddSheet: Bool = false
     
     private var monthItems: [AssignmentItem] {
-        let now = Date()
-        return deadlineStore.allDeadlines.filter {
-            // 지난 항목 제외하고 현재 월에 해당하는 항목만
-            $0.dueAt >= now && Calendar.current.isDate($0.dueAt, equalTo: currentMonth, toGranularity: .month)
+        deadlineStore.allDeadlines.filter {
+            Calendar.current.isDate($0.dueAt, equalTo: currentMonth, toGranularity: .month)
         }
     }
     
@@ -32,8 +30,7 @@ struct CalendarView: View {
         let endOfWeek = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: sunday) ?? sunday
         
         return deadlineStore.allDeadlines.filter { item in
-            // 지난 항목 제외하고 이번 주 항목만
-            item.dueAt >= now && item.dueAt >= monday && item.dueAt <= endOfWeek
+            item.dueAt >= monday && item.dueAt <= endOfWeek
         }.sorted { $0.dueAt < $1.dueAt }
     }
     
@@ -41,10 +38,9 @@ struct CalendarView: View {
         ZStack {
             AppBackground()
             VStack(spacing: 0) {
-                // 고정된 상단 바
+                // 상단 바는 고정
                 topBar
-                    .background(Color.clear)
-                    .zIndex(1)
+                    .padding(.bottom, 8)
                 
                 // 스크롤 가능한 콘텐츠
                 ScrollView(showsIndicators: false) {
@@ -64,9 +60,11 @@ struct CalendarView: View {
                         
                         DayDueListCard(date: selectedDate, items: dayItems(), deadlineStore: deadlineStore, studentId: auth.studentId ?? 0)
                             .padding(.horizontal, 16)
-                            .padding(.bottom, 20)
+                        
+                        // 하단 여백
+                        Color.clear.frame(height: 20)
                     }
-                    .padding(.top, 16)
+                    .padding(.top, 8)
                 }
             }
         }
@@ -130,20 +128,8 @@ struct CalendarView: View {
     }
     private func monthTitle(_ date: Date) -> String { let f = DateFormatter(); f.locale = Locale(identifier: "ko_KR"); f.dateFormat = "YYYY년 M월"; return f.string(from: date) }
     private func dayItems() -> [AssignmentItem] {
-        let now = Date()
-        let calendar = Calendar.current
-        
-        return deadlineStore.allDeadlines
-            .filter { item in
-                // 선택한 날짜와 같은 날인지 확인
-                let isSameDay = calendar.isDate(item.dueAt, inSameDayAs: selectedDate)
-                
-                // 지난 항목 제외 (단, 오늘 선택 시 오늘의 모든 항목 표시)
-                let isToday = calendar.isDateInToday(selectedDate)
-                let notExpired = isToday || item.dueAt >= now
-                
-                return isSameDay && notExpired
-            }
+        deadlineStore.allDeadlines
+            .filter { Calendar.current.isDate($0.dueAt, inSameDayAs: selectedDate) }
             .sorted { $0.dueAt < $1.dueAt }
     }
 }

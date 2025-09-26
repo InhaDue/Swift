@@ -80,67 +80,6 @@ class LMSWebCrawler: NSObject, ObservableObject {
         self.webView.navigationDelegate = self
     }
     
-    /// 백그라운드에서 크롤링 수행 (UI 없이)
-    func performBackgroundCrawl(username: String, password: String) async -> Result<CrawlData, Error> {
-        return await withCheckedContinuation { continuation in
-            // 메인 스레드에서 WebView 크롤링 수행
-            Task { @MainActor in
-                // 크롤링 시작
-                self.startCrawling(username: username, password: password) { result in
-                    continuation.resume(returning: result)
-                }
-            }
-        }
-    }
-    
-    /// 크롤링 데이터를 서버로 전송
-    func submitCrawlData(_ crawlData: CrawlData, studentId: Int) async -> Result<Void, Error> {
-        guard let url = URL(string: "\(AppConfig.baseURL)/api/crawl/submit/\(studentId)") else {
-            return .failure(NSError(domain: "LMSCrawler", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // AuthStore에서 토큰 가져오기
-        if let token = UserDefaults.standard.string(forKey: "authToken") {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        
-        do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            request.httpBody = try encoder.encode(crawlData)
-            
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 200 {
-                    return .success(())
-                } else {
-                    // 에러 응답 파싱
-                    if let errorData = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
-                        return .failure(NSError(domain: "LMSCrawler", code: httpResponse.statusCode, 
-                                              userInfo: [NSLocalizedDescriptionKey: errorData.error]))
-                    }
-                    return .failure(NSError(domain: "LMSCrawler", code: httpResponse.statusCode, 
-                                          userInfo: [NSLocalizedDescriptionKey: "Server error: \(httpResponse.statusCode)"]))
-                }
-            }
-            
-            return .failure(NSError(domain: "LMSCrawler", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
-            
-        } catch {
-            return .failure(error)
-        }
-    }
-    
-    struct ErrorResponse: Codable {
-        let success: Bool
-        let error: String
-    }
-    
     /// LMS 크롤링 시작
     func startCrawling(username: String, password: String, completion: @escaping (Result<CrawlData, Error>) -> Void) {
         self.completion = completion
@@ -226,10 +165,8 @@ class LMSWebCrawler: NSObject, ObservableObject {
                 return
             }
             
-            // 로그인 후 대시보드로 이동 대기
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                self?.checkLoginAndNavigate()
-            }
+            // 로그인 후 대시보드로 이동
+            self?.checkLoginAndNavigate()
         }
     }
     
@@ -241,30 +178,19 @@ class LMSWebCrawler: NSObject, ObservableObject {
         guard let url = URL(string: "https://learn.inha.ac.kr/") else { return }
         webView.load(URLRequest(url: url))
         
-        // 대시보드 로딩 대기 후 과목 추출
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.extractCourses()
-        }
+        // 페이지 로드가 완료되면 webView(_:didFinish:)에서 extractCourses()가 호출됨
     }
     
     private func navigateToDashboardAndExtract() {
         guard let url = URL(string: "https://learn.inha.ac.kr/") else { return }
         webView.load(URLRequest(url: url))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.extractCourses()
-        }
+        // 페이지 로드가 완료되면 webView(_:didFinish:)에서 extractCourses()가 호출됨
     }
     
     /// 로그인 성공 처리
     private func handleLoginSuccess() {
         guard !isCrawling else { return }
         isCrawling = true
-        
-        // 로그인 성공 시 계정 정보를 Keychain에 저장
-        if let username = currentUsername, let password = currentPassword {
-            _ = KeychainHelper.shared.saveLMSCredentials(username: username, password: password)
-        }
-        
         extractCourses()
     }
     
@@ -485,15 +411,23 @@ class LMSWebCrawler: NSObject, ObservableObject {
                                     var due = (dueCol >= 0 && cells[dueCol]) ? 
                                              cells[dueCol].textContent.trim() : '';
                                     
-                                    if (title && title !== '-' && due && due !== '-' && due !== '') {
-                                        console.log('Found assignment: ' + title + ' (due: ' + due + ')');
+                                    if (title && title !== '-') {
+                                        // 마감일이 없으면 기본값 설정 (30일 후)
+                                        if (!due || due === '-' || due === '') {
+                                            var defaultDate = new Date();
+                                            defaultDate.setDate(defaultDate.getDate() + 30);
+                                            due = defaultDate.getFullYear() + '-' + 
+                                                  String(defaultDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                                                  String(defaultDate.getDate()).padStart(2, '0') + ' 23:59';
+                                            console.log('No due date for: ' + title + ', using default: ' + due);
+                                        } else {
+                                            console.log('Found assignment: ' + title + ' (due: ' + due + ')');
+                                        }
                                         assignments.push({
                                             title: title,
                                             url: url,
                                             due: due
                                         });
-                                    } else if (title) {
-                                        console.log('Skipping assignment without due date: ' + title);
                                     }
                                 }
                             }
@@ -695,10 +629,13 @@ class LMSWebCrawler: NSObject, ObservableObject {
                                 normalizedDue = self?.normalizeDueDate(due)
                             }
                             
-                            // 과제인데 마감일이 없으면 건너뛰기
+                            // 과제인데 마감일이 없으면 30일 후로 설정
                             if isAssignment && normalizedDue == nil {
-                                print("⚠️ Skipping assignment '\(title)' - no valid due date")
-                                continue
+                                let defaultDate = Date().addingTimeInterval(30 * 24 * 60 * 60)
+                                let formatter = DateFormatter()
+                                formatter.dateFormat = "yyyy-MM-dd HH:mm"
+                                normalizedDue = formatter.string(from: defaultDate)
+                                print("⚠️ No due date for assignment '\(title)', using default: \(normalizedDue ?? "")")
                             }
                             
                             let item = CrawlData.Item(
@@ -1007,32 +944,24 @@ extension LMSWebCrawler: WKNavigationDelegate {
         // 현재 크롤링 정보가 있으면 해당 작업 수행 (동기적 처리)
         if let crawlInfo = currentCrawlInfo {
             if crawlInfo.type == "assignment" && url.absoluteString.contains("mod/assign/index.php") {
-                // 과제 페이지 로드 완료 - 1초 후 데이터 추출
+                // 과제 페이지 로드 완료 - 즉시 데이터 추출
                 print("Assignment page loaded for \(crawlInfo.courseName), extracting data...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.extractAssignmentData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
-                }
+                self.extractAssignmentData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
                 return
             } else if crawlInfo.type == "vod" && url.absoluteString.contains("course/view.php") {
-                // VOD 페이지 로드 완료 - 1초 후 데이터 추출
+                // VOD 페이지 로드 완료 - 즉시 데이터 추출
                 print("VOD page loaded for \(crawlInfo.courseName), extracting data...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.extractVODData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
-                }
+                self.extractVODData(courseId: crawlInfo.courseId, courseName: crawlInfo.courseName)
                 return
             }
         }
         
         // 자동 로그인 모드
         if url.absoluteString.contains("login/index.php") {
-            // 로그인 페이지 로드 완료 - 자동 로그인 시도
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                self?.performLogin()
-            }
-        } else if url.absoluteString.contains("learn.inha.ac.kr") && 
-                  (url.absoluteString.contains("/my") || url.absoluteString.contains("/course")) &&
-                  !isCrawling {
-            // 로그인 성공 후 대시보드 또는 과목 페이지
+            // 로그인 페이지 로드 완료 - 즉시 자동 로그인 시도
+            self.performLogin()
+        } else if url.absoluteString == "https://learn.inha.ac.kr/" && !isCrawling {
+            // 대시보드 메인 페이지 로드 완료 - 과목 추출 시작
             handleLoginSuccess()
         }
     }

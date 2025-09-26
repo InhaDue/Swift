@@ -55,11 +55,9 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal)
                     
-                    // 섹션 헤더와 필터 버튼
-                    HStack {
-                        Text("다가오는 일정")
-                            .font(.title2)
-                            .fontWeight(.bold)
+                    // 섹션 헤더와 필터들
+                    HStack(spacing: 8) {
+                        SectionHeader(title: "다가오는 일정")
                         
                         Spacer()
                         
@@ -73,33 +71,32 @@ struct HomeView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.up.arrow.down")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11))
                                 Text(sortOrder.rawValue)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.system(size: 12, weight: .medium))
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(Color(.systemGray6))
-                            .cornerRadius(8)
+                            .cornerRadius(6)
                         }
                         
                         // 완료 필터
                         Button(action: { showCompleted.toggle() }) {
                             HStack(spacing: 4) {
                                 Image(systemName: showCompleted ? "eye" : "eye.slash")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11))
                                 Text(showCompleted ? "전체" : "미완료")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.system(size: 12, weight: .medium))
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(showCompleted ? Color(.systemGray6) : Color.blue.opacity(0.1))
                             .foregroundColor(showCompleted ? .primary : .blue)
-                            .cornerRadius(8)
+                            .cornerRadius(6)
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.top, 10)
                     FilterBar(selected: $selectedFilter)
                     if deadlineStore.isLoading {
                         ProgressView("로딩 중...")
