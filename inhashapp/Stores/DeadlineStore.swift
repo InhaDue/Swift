@@ -38,10 +38,18 @@ class DeadlineStore: ObservableObject {
     }
     
     var filteredDeadlines: [AssignmentItem] {
-        guard let days = dateFilter.days else { return allDeadlines }
+        let now = Date()
         
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
-        return allDeadlines.filter { $0.dueAt <= cutoffDate }
+        // 먼저 지난 항목 제외
+        var filtered = allDeadlines.filter { $0.dueAt >= now }
+        
+        // 날짜 필터 적용
+        if let days = dateFilter.days {
+            let cutoffDate = Calendar.current.date(byAdding: .day, value: days, to: now) ?? now
+            filtered = filtered.filter { $0.dueAt <= cutoffDate }
+        }
+        
+        return filtered
     }
 
     init() {

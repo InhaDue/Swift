@@ -9,8 +9,10 @@ struct CalendarView: View {
     @State private var showingAddSheet: Bool = false
     
     private var monthItems: [AssignmentItem] {
-        deadlineStore.allDeadlines.filter {
-            Calendar.current.isDate($0.dueAt, equalTo: currentMonth, toGranularity: .month)
+        let now = Date()
+        return deadlineStore.allDeadlines.filter {
+            // 지난 항목 제외하고 현재 월에 해당하는 항목만
+            $0.dueAt >= now && Calendar.current.isDate($0.dueAt, equalTo: currentMonth, toGranularity: .month)
         }
     }
     
@@ -30,33 +32,42 @@ struct CalendarView: View {
         let endOfWeek = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: sunday) ?? sunday
         
         return deadlineStore.allDeadlines.filter { item in
-            item.dueAt >= monday && item.dueAt <= endOfWeek
+            // 지난 항목 제외하고 이번 주 항목만
+            item.dueAt >= now && item.dueAt >= monday && item.dueAt <= endOfWeek
         }.sorted { $0.dueAt < $1.dueAt }
     }
     
     var body: some View {
         ZStack {
             AppBackground()
-            VStack(spacing: 16) {
+            VStack(spacing: 0) {
+                // 고정된 상단 바
                 topBar
+                    .background(Color.clear)
+                    .zIndex(1)
                 
-                if mode == .month {
-                    MonthCalendarCard(month: currentMonth,
-                                      selectedDate: $selectedDate,
-                                      dots: monthDots())
-                        .padding(.horizontal, 16)
-                } else {
-                    WeekSummaryCard(weekItems: weekItems)
-                        .padding(.horizontal, 16)
+                // 스크롤 가능한 콘텐츠
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        if mode == .month {
+                            MonthCalendarCard(month: currentMonth,
+                                              selectedDate: $selectedDate,
+                                              dots: monthDots())
+                                .padding(.horizontal, 16)
+                        } else {
+                            WeekSummaryCard(weekItems: weekItems)
+                                .padding(.horizontal, 16)
+                        }
+                        
+                        MonthlySummaryCard(monthItems: monthItems)
+                            .padding(.horizontal, 16)
+                        
+                        DayDueListCard(date: selectedDate, items: dayItems(), deadlineStore: deadlineStore, studentId: auth.studentId ?? 0)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 20)
+                    }
+                    .padding(.top, 16)
                 }
-                
-                MonthlySummaryCard(monthItems: monthItems)
-                    .padding(.horizontal, 16)
-                
-                DayDueListCard(date: selectedDate, items: dayItems(), deadlineStore: deadlineStore, studentId: auth.studentId ?? 0)
-                    .padding(.horizontal, 16)
-                
-                Spacer(minLength: 0)
             }
         }
         .onAppear {
@@ -119,8 +130,20 @@ struct CalendarView: View {
     }
     private func monthTitle(_ date: Date) -> String { let f = DateFormatter(); f.locale = Locale(identifier: "ko_KR"); f.dateFormat = "YYYY년 M월"; return f.string(from: date) }
     private func dayItems() -> [AssignmentItem] {
-        deadlineStore.allDeadlines
-            .filter { Calendar.current.isDate($0.dueAt, inSameDayAs: selectedDate) }
+        let now = Date()
+        let calendar = Calendar.current
+        
+        return deadlineStore.allDeadlines
+            .filter { item in
+                // 선택한 날짜와 같은 날인지 확인
+                let isSameDay = calendar.isDate(item.dueAt, inSameDayAs: selectedDate)
+                
+                // 지난 항목 제외 (단, 오늘 선택 시 오늘의 모든 항목 표시)
+                let isToday = calendar.isDateInToday(selectedDate)
+                let notExpired = isToday || item.dueAt >= now
+                
+                return isSameDay && notExpired
+            }
             .sorted { $0.dueAt < $1.dueAt }
     }
 }

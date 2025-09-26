@@ -7,7 +7,6 @@ struct LoginView: View {
     @State private var showPassword = false
     @State private var loading = false
     @State private var selectedAuthTab: Int = 0 // 0: 로그인, 1: 회원가입
-    @State private var signupName = ""
     @State private var signupEmail = ""
     @State private var signupPassword = ""
     @State private var signupLoading = false
@@ -20,7 +19,7 @@ struct LoginView: View {
     private let fieldHeight: CGFloat = 44
     private let buttonHeight: CGFloat = 48
     private var loginContentHeight: CGFloat { fieldHeight * 2 + buttonHeight * 2 + 14 * 3 + 20 + 20 }
-    private var signupContentHeight: CGFloat { fieldHeight * 3 + buttonHeight * 2 + 14 * 4 + 20 + 20 }
+    private var signupContentHeight: CGFloat { fieldHeight * 3 + buttonHeight * 2 + 14 * 3 + 20 + 20 }
     
     private var animatedTabBinding: Binding<Int> {
         Binding(
@@ -128,8 +127,6 @@ struct LoginView: View {
                             .transition(.opacity)
                         } else {
                             VStack(spacing: 14) {
-                                IconTextField(systemImage: "person", placeholder: "이름", text: $signupName, isSecure: .constant(false), showSecure: .constant(false))
-                                    .frame(height: 44)
                                 ZStack(alignment: .trailing) {
                                     IconTextField(systemImage: "envelope", placeholder: "이메일", text: $signupEmail, isSecure: .constant(false), showSecure: .constant(false))
                                         .frame(height: 44)
@@ -184,7 +181,7 @@ struct LoginView: View {
     }
     
     private func submit() { loading = true; Task { await auth.login(email: email, password: password); loading = false } }
-    private func submitSignup() { signupLoading = true; Task { await auth.signup(email: signupEmail, password: signupPassword, name: signupName); signupLoading = false } }
+    private func submitSignup() { signupLoading = true; Task { await auth.signup(email: signupEmail, password: signupPassword, name: signupEmail.components(separatedBy: "@").first ?? "User"); signupLoading = false } }
     private func checkEmailDuplicate() { emailCheckLoading = true; emailCheckResult = nil; DispatchQueue.main.asyncAfter(deadline: .now()+0.8){ self.emailCheckLoading=false; self.emailCheckResult=Bool.random() } }
 }
 

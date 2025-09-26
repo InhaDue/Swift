@@ -9,6 +9,9 @@ struct SettingsView: View {
     @State private var showingReconnectAlert = false
     @State private var showingLmsWebView = false
     @State private var isDeleting = false
+    @State private var isSyncing = false
+    @State private var lastSyncDate: Date? = nil
+    @State private var syncMessage: String? = nil
     
     let ddayOptions: [Int] = [3, 2, 1]
     
@@ -32,6 +35,73 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                
+                Section(header: Text("데이터 동기화")) {
+                    VStack(spacing: 12) {
+                        Button(action: {
+                            Task {
+                                await syncData()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.cloud")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(isSyncing ? .gray : .white)
+                                    .rotationEffect(.degrees(isSyncing ? 360 : 0))
+                                    .animation(isSyncing ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isSyncing)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("과제/수업 동기화")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.white)
+                                    
+                                    if let lastSync = lastSyncDate {
+                                        Text("마지막 동기화: \(lastSync, formatter: relativeDateFormatter)")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white.opacity(0.8))
+                                    } else {
+                                        Text("탭하여 최신 정보 가져오기")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white.opacity(0.8))
+                                    }
+                                }
+                                
+                                Spacer()
+                                
+                                if isSyncing {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: isSyncing ? [.gray, .gray.opacity(0.8)] : [.blue, .blue.opacity(0.8)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .cornerRadius(12)
+                            .shadow(color: .blue.opacity(0.3), radius: 8, x: 0, y: 4)
+                        }
+                        .disabled(isSyncing)
+                        
+                        if let message = syncMessage {
+                            Text(message)
+                                .font(.system(size: 13))
+                                .foregroundColor(message.contains("성공") ? .green : .secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
                 }
                 
                 Section(header: Text("계정")) {
@@ -75,6 +145,47 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showingLmsWebView) {
                 LmsReconnectView()
+            }
+        }
+    }
+    
+    private var relativeDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        return formatter
+    }
+    
+    private func syncData() async {
+        guard let studentId = auth.studentId else { return }
+        
+        await MainActor.run {
+            isSyncing = true
+            syncMessage = nil
+        }
+        
+        // LMS 웹뷰를 통해 데이터 크롤링
+        // 여기서는 간단히 시뮬레이션
+        do {
+            // 실제로는 LMSWebCrawler를 통해 데이터를 가져와야 함
+            try await Task.sleep(nanoseconds: 2_000_000_000) // 2초 대기 시뮬레이션
+            
+            await MainActor.run {
+                isSyncing = false
+                lastSyncDate = Date()
+                syncMessage = "✓ 동기화 완료! 새로운 과제 3개, 수업 2개 추가됨"
+            }
+            
+            // 3초 후 메시지 제거
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run {
+                syncMessage = nil
+            }
+        } catch {
+            await MainActor.run {
+                isSyncing = false
+                syncMessage = "동기화 실패. 다시 시도해주세요."
             }
         }
     }

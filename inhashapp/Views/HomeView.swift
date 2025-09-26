@@ -4,13 +4,35 @@ struct HomeView: View {
     @EnvironmentObject private var auth: AuthStore
     @StateObject private var deadlineStore = DeadlineStore()
     @State private var selectedFilter: ScheduleFilter = .all
+    @State private var showCompleted: Bool = true
+    @State private var sortOrder: SortOrder = .dueDate
+    
+    enum SortOrder: String, CaseIterable {
+        case dueDate = "마감일순"
+        case courseName = "과목명순"
+        case title = "제목순"
+    }
 
     private var filteredItems: [AssignmentItem] {
-        let base = deadlineStore.filteredDeadlines.sorted { $0.dueAt < $1.dueAt }
+        var base = deadlineStore.filteredDeadlines
+        
+        // 완료 필터
+        if !showCompleted {
+            base = base.filter { !$0.completed }
+        }
+        
+        // 타입 필터
         switch selectedFilter {
-        case .all: return base
-        case .assignment: return base.filter { $0.type == "assignment" }
-        case .lecture: return base.filter { $0.type == "lecture" || $0.type == "class" }
+        case .all: break
+        case .assignment: base = base.filter { $0.type == "assignment" }
+        case .lecture: base = base.filter { $0.type == "lecture" || $0.type == "class" }
+        }
+        
+        // 정렬
+        switch sortOrder {
+        case .dueDate: return base.sorted { $0.dueAt < $1.dueAt }
+        case .courseName: return base.sorted { $0.courseName < $1.courseName }
+        case .title: return base.sorted { $0.title < $1.title }
         }
     }
 
@@ -20,9 +42,8 @@ struct HomeView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
                     
-                    // 날짜 필터
+                    // 날짜 필터 (중앙 정렬)
                     HStack {
-                        Spacer()
                         Picker("", selection: $deadlineStore.dateFilter) {
                             ForEach(DeadlineStore.DateFilter.allCases, id: \.self) { filter in
                                 Text(filter.rawValue).tag(filter)
@@ -31,9 +52,54 @@ struct HomeView: View {
                         .pickerStyle(SegmentedPickerStyle())
                         .frame(maxWidth: 280)
                     }
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal)
                     
-                    SectionHeader(title: "다가오는 일정")
+                    // 섹션 헤더와 필터 버튼
+                    HStack {
+                        Text("다가오는 일정")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Spacer()
+                        
+                        // 정렬 선택
+                        Menu {
+                            ForEach(SortOrder.allCases, id: \.self) { order in
+                                Button(action: { sortOrder = order }) {
+                                    Label(order.rawValue, systemImage: sortOrder == order ? "checkmark" : "")
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up.arrow.down")
+                                    .font(.system(size: 12))
+                                Text(sortOrder.rawValue)
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                        
+                        // 완료 필터
+                        Button(action: { showCompleted.toggle() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: showCompleted ? "eye" : "eye.slash")
+                                    .font(.system(size: 12))
+                                Text(showCompleted ? "전체" : "미완료")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(showCompleted ? Color(.systemGray6) : Color.blue.opacity(0.1))
+                            .foregroundColor(showCompleted ? .primary : .blue)
+                            .cornerRadius(8)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 10)
                     FilterBar(selected: $selectedFilter)
                     if deadlineStore.isLoading {
                         ProgressView("로딩 중...")
