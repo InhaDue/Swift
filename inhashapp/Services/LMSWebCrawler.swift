@@ -412,22 +412,17 @@ class LMSWebCrawler: NSObject, ObservableObject {
                                              cells[dueCol].textContent.trim() : '';
                                     
                                     if (title && title !== '-') {
-                                        // 마감일이 없으면 기본값 설정 (30일 후)
-                                        if (!due || due === '-' || due === '') {
-                                            var defaultDate = new Date();
-                                            defaultDate.setDate(defaultDate.getDate() + 30);
-                                            due = defaultDate.getFullYear() + '-' + 
-                                                  String(defaultDate.getMonth() + 1).padStart(2, '0') + '-' + 
-                                                  String(defaultDate.getDate()).padStart(2, '0') + ' 23:59';
-                                            console.log('No due date for: ' + title + ', using default: ' + due);
-                                        } else {
+                                        // 마감일이 있는 과제만 추가
+                                        if (due && due !== '-' && due !== '') {
                                             console.log('Found assignment: ' + title + ' (due: ' + due + ')');
+                                            assignments.push({
+                                                title: title,
+                                                url: url,
+                                                due: due
+                                            });
+                                        } else {
+                                            console.log('Skipping assignment without due date: ' + title);
                                         }
-                                        assignments.push({
-                                            title: title,
-                                            url: url,
-                                            due: due
-                                        });
                                     }
                                 }
                             }
@@ -629,24 +624,20 @@ class LMSWebCrawler: NSObject, ObservableObject {
                                 normalizedDue = self?.normalizeDueDate(due)
                             }
                             
-                            // 과제인데 마감일이 없으면 30일 후로 설정
+                            // 과제인데 마감일이 없으면 스킵, VOD는 마감일 없어도 추가
                             if isAssignment && normalizedDue == nil {
-                                let defaultDate = Date().addingTimeInterval(30 * 24 * 60 * 60)
-                                let formatter = DateFormatter()
-                                formatter.dateFormat = "yyyy-MM-dd HH:mm"
-                                normalizedDue = formatter.string(from: defaultDate)
-                                print("⚠️ No due date for assignment '\(title)', using default: \(normalizedDue ?? "")")
+                                print("⚠️ Skipping assignment without due date: '\(title)'")
+                            } else {
+                                let item = CrawlData.Item(
+                                    type: isAssignment ? "assignment" : "class",
+                                    courseName: cleanedCourseName,
+                                    title: title,
+                                    url: nil,  // URL 전송하지 않음 (개인정보 보호)
+                                    due: normalizedDue,
+                                    remainingSeconds: nil
+                                )
+                                self?.items.append(item)
                             }
-                            
-                            let item = CrawlData.Item(
-                                type: isAssignment ? "assignment" : "class",
-                                courseName: cleanedCourseName,
-                                title: title,
-                                url: nil,  // URL 전송하지 않음 (개인정보 보호)
-                                due: normalizedDue,
-                                remainingSeconds: nil
-                            )
-                            self?.items.append(item)
                         }
                     }
                 }
