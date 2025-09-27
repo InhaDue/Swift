@@ -48,8 +48,6 @@ struct DataRefreshView: View {
                     )
                     
                     RefreshInfoCard()
-                    
-                    RefreshHistoryCard(refreshCount: refreshCount)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -374,13 +372,6 @@ private struct RefreshInfoCard: View {
                 )
                 
                 InfoRow(
-                    icon: "exclamationmark.triangle.fill",
-                    title: "주의사항",
-                    description: "갱신 중에는 LMS에 로그인됩니다",
-                    color: .red
-                )
-                
-                InfoRow(
                     icon: "person.crop.circle.badge.exclamationmark",
                     title: "세션 충돌 시",
                     description: "LMS에서 로그아웃 후 다시 시도하세요",
@@ -436,63 +427,6 @@ private struct InfoRow: View {
     }
 }
 
-private struct RefreshHistoryCard: View {
-    let refreshCount: Int
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Label("갱신 통계", systemImage: "chart.bar.fill")
-                    .font(.headline)
-                Spacer()
-            }
-            
-            HStack(spacing: 20) {
-                StatItem(
-                    value: "\(refreshCount)",
-                    label: "총 갱신 횟수",
-                    color: .blue
-                )
-                
-                StatItem(
-                    value: "\(max(0, refreshCount / 7))",
-                    label: "주간 평균",
-                    color: .green
-                )
-                
-                StatItem(
-                    value: "정상",
-                    label: "연결 상태",
-                    color: .green
-                )
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.06), radius: 16, x: 0, y: 8)
-        )
-    }
-}
-
-private struct StatItem: View {
-    let value: String
-    let label: String
-    let color: Color
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundColor(color)
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
 
 // KeychainHelper - 패스워드 저장용
 struct KeychainHelper {

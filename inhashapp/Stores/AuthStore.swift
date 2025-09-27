@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 import Combine
 import SwiftUI
 
@@ -110,12 +111,19 @@ final class AuthStore: ObservableObject {
     }
     
     func logout() {
-        storedToken = nil
-        storedStudentId = nil
-        storedEmail = nil
-        storedName = nil
-        storedLmsLinked = false
-        isAuthenticated = false
+        // WebView 세션 초기화
+        WKWebsiteDataStore.default().removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: Date(timeIntervalSince1970: 0)
+        ) { [weak self] in
+            // 로컬 데이터 초기화
+            self?.storedToken = nil
+            self?.storedStudentId = nil
+            self?.storedEmail = nil
+            self?.storedName = nil
+            self?.storedLmsLinked = false
+            self?.isAuthenticated = false
+        }
     }
     
     func linkLms(username: String, password: String, progress: @escaping (Int)->Void) async {

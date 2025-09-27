@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 struct SettingsView: View {
     @EnvironmentObject private var auth: AuthStore
@@ -56,7 +57,7 @@ struct SettingsView: View {
                         showingReconnectAlert = true
                     }) {
                         HStack {
-                            Label("인하대학교 계정 변경", systemImage: "arrow.triangle.2.circlepath")
+                            Label("LMS 계정 변경", systemImage: "arrow.triangle.2.circlepath")
                                 .foregroundColor(.primary)
                             Spacer()
                             if isDeleting {
@@ -82,7 +83,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("설정")
-            .alert("인하대학교 계정 변경", isPresented: $showingReconnectAlert) {
+            .alert("LMS 계정 변경", isPresented: $showingReconnectAlert) {
                 Button("취소", role: .cancel) { }
                 Button("계속", role: .destructive) {
                     Task {
@@ -173,18 +174,25 @@ struct SettingsView: View {
             // 계정 삭제
             _ = try await URLSession.shared.data(for: deleteAccountRequest)
             
-            // 성공 시 로그아웃
+            // 성공 시 WebView 세션 초기화 후 로그아웃
             await MainActor.run {
                 isDeleting = false
-                // 로컬 데이터 삭제
-                UserDefaults.standard.removeObject(forKey: "studentId")
-                UserDefaults.standard.removeObject(forKey: "lmsUsername")
-                // 키체인에서 비밀번호 삭제
-                if let username = UserDefaults.standard.string(forKey: "lmsUsername") {
-                    KeychainHelper.shared.delete(service: "com.inhash.app", account: username)
+                
+                // WebView 세션 초기화
+                WKWebsiteDataStore.default().removeData(
+                    ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                    modifiedSince: Date(timeIntervalSince1970: 0)
+                ) { [weak auth] in
+                    // 로컬 데이터 삭제
+                    UserDefaults.standard.removeObject(forKey: "studentId")
+                    UserDefaults.standard.removeObject(forKey: "lmsUsername")
+                    // 키체인에서 비밀번호 삭제
+                    if let username = UserDefaults.standard.string(forKey: "lmsUsername") {
+                        KeychainHelper.shared.delete(service: "com.inhash.app", account: username)
+                    }
+                    // 로그아웃
+                    auth?.logout()
                 }
-                // 로그아웃
-                auth.logout()
             }
         } catch {
             print("Failed to delete account: \(error)")
@@ -250,7 +258,7 @@ struct LmsReconnectView: View {
                         .padding(.top, 50)
                     
                     VStack(spacing: 16) {
-                        Text("인하대학교 계정 재연결")
+                        Text("LMS 계정 재연결")
                             .font(.title2)
                             .fontWeight(.bold)
                         
