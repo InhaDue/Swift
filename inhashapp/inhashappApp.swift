@@ -66,7 +66,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     private func sendFCMTokenToServer(_ token: String) {
         // 서버로 FCM 토큰 전송 구현
         guard let studentId = UserDefaults.standard.object(forKey: "studentId") as? Int,
-              let url = URL(string: "http://localhost:8080/api/fcm/register") else {
+              let url = URL(string: AppConfig.API.registerFCM) else {
             return
         }
         

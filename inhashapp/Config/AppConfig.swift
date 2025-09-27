@@ -1,14 +1,19 @@
 import Foundation
 
 struct AppConfig {
-    // 로컬 테스트용 서버 주소
-    // 실제 기기 테스트 시: Mac의 IP 주소로 변경 (예: "http://192.168.1.100:8080")
-    // 프로덕션: 실제 서버 주소로 변경
-    #if DEBUG
+    // ⚠️ 환경 전환: 아래 세 줄 중 하나만 주석 해제하세요
+    // ================================================
+    
+    // 1. 시뮬레이터 테스트용
     static let baseURL = "http://localhost:8080"
-    #else
-    static let baseURL = "https://api.inhash.com" // 프로덕션 서버 주소
-    #endif
+    
+    // 2. 실제 기기 테스트용 (Mac의 IP 주소로 변경 필요)
+    // static let baseURL = "http://192.168.1.100:8080"
+    
+    // 3. 프로덕션 서버
+    // static let baseURL = "https://api.inhash.com"
+    
+    // ================================================
     
     // API Endpoints
     struct API {
