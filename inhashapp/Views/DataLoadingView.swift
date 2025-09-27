@@ -9,6 +9,15 @@ struct DataLoadingView: View {
     
     let username: String
     let password: String
+    let isRefreshMode: Bool
+    let onRefreshComplete: ((Bool) -> Void)?
+    
+    init(username: String, password: String, isRefreshMode: Bool = false, onRefreshComplete: ((Bool) -> Void)? = nil) {
+        self.username = username
+        self.password = password
+        self.isRefreshMode = isRefreshMode
+        self.onRefreshComplete = onRefreshComplete
+    }
     
     @State private var progress: Int = 0
     @State private var isLoading: Bool = true
@@ -30,10 +39,10 @@ struct DataLoadingView: View {
                             .overlay(Image(systemName: "bolt.horizontal.circle.fill").foregroundColor(.secondary))
                             .frame(width: 28, height: 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("데이터 수집 중")
+                            Text(isRefreshMode ? "데이터 갱신 중" : "데이터 수집 중")
                                 .font(.title3)
                                 .fontWeight(.semibold)
-                            Text("LMS에서 정보를 가져오고 있습니다")
+                            Text(isRefreshMode ? "LMS에서 최신 정보를 가져오고 있습니다" : "LMS에서 정보를 가져오고 있습니다")
                                 .font(.footnote)
                                 .foregroundColor(.secondary)
                         }
@@ -148,18 +157,34 @@ struct DataLoadingView: View {
                                     scheduleDone = true
                                 }
                                 
-                                // 백그라운드 업데이트 매니저에 자격 증명 저장
-                                backgroundManager.saveLMSCredentials(username: username, password: password)
-                                
-                                // LMS 연결 상태 업데이트
-                                await auth.linkLms(username: username, password: password) { _ in }
+                                if isRefreshMode {
+                                    // 갱신 모드: 갱신 시간만 업데이트
+                                    let userRefreshKey = "lastRefreshTime_\(studentId)"
+                                    let userRefreshCountKey = "refreshCount_\(studentId)"
+                                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: userRefreshKey)
+                                    let currentCount = UserDefaults.standard.integer(forKey: userRefreshCountKey)
+                                    UserDefaults.standard.set(currentCount + 1, forKey: userRefreshCountKey)
+                                } else {
+                                    // 회원가입 모드: 기존 로직
+                                    backgroundManager.saveLMSCredentials(username: username, password: password)
+                                    await auth.linkLms(username: username, password: password) { _ in }
+                                    
+                                    let userRefreshKey = "lastRefreshTime_\(studentId)"
+                                    let userRefreshCountKey = "refreshCount_\(studentId)"
+                                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: userRefreshKey)
+                                    UserDefaults.standard.set(1, forKey: userRefreshCountKey)
+                                }
                                 
                                 progress = 100
                                 isLoading = false
                                 
-                                // 완료 후 화면 닫기
+                                // 완료 후 처리
                                 try? await Task.sleep(nanoseconds: 500_000_000)
-                                dismiss()
+                                if isRefreshMode {
+                                    onRefreshComplete?(true)
+                                } else {
+                                    dismiss()
+                                }
                                 
                             } catch {
                                 errorMessage = "서버 전송 실패: \(error.localizedDescription)"
@@ -169,6 +194,11 @@ struct DataLoadingView: View {
                         case .failure(let error):
                             errorMessage = "크롤링 실패: \(error.localizedDescription)"
                             isLoading = false
+                            if isRefreshMode {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    onRefreshComplete?(false)
+                                }
+                            }
                         }
                     }
                 }

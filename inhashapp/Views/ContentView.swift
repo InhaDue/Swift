@@ -30,8 +30,8 @@ struct MainTabs: View {
                 .tabItem { Label("홈", systemImage: "house") }
             CalendarView()
                 .tabItem { Label("캘린더", systemImage: "calendar") }
-            SummaryView()
-                .tabItem { Label("요약", systemImage: "chart.bar") }
+            DataRefreshView()
+                .tabItem { Label("갱신", systemImage: "arrow.clockwise") }
             SettingsView()
                 .tabItem { Label("설정", systemImage: "gearshape") }
         }

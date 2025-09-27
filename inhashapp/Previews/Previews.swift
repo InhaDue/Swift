@@ -36,8 +36,10 @@ import SwiftUI
         .environmentObject(store)
 }
 
-#Preview("SummaryView") {
-    SummaryView()
+#Preview("DataRefreshView") {
+    let auth = AuthStore()
+    return DataRefreshView()
+        .environmentObject(auth)
 }
 
 #Preview("SettingsView") {

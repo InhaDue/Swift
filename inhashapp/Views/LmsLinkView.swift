@@ -103,8 +103,8 @@ struct LmsLinkView: View {
             }
         }
         .fullScreenCover(isPresented: $showLoadingScreen) {
-            // 동일한 crawler 인스턴스를 전달하여 세션 유지
-            DataLoadingView(crawler: crawler, username: username, password: password)
+            // DataLoadingView로 이동
+            DataLoadingView(username: username, password: password)
                 .environmentObject(auth)
         }
     }

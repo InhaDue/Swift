@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct ConsentView: View {
     @Binding var accepted: Bool
@@ -48,6 +49,12 @@ struct ConsentView: View {
                         title: "최소 정보 수집",
                         description: "과제명, 마감일 등 필수 정보만 수집합니다"
                     )
+                    
+                    PrivacyPrincipleRow(
+                        icon: "bell.badge",
+                        title: "알림 발송",
+                        description: "과제 마감일 및 갱신 알림을 보냅니다"
+                    )
                 }
                 .padding(16)
                 .background(Color.blue.opacity(0.05))
@@ -79,7 +86,8 @@ struct ConsentView: View {
                                 items: [
                                     "• 과목명 (예: 디지털논리회로)",
                                     "• 과제 제목 및 마감일",
-                                    "• 수업/강의 제목 및 수강 기한"
+                                    "• 수업/강의 제목 및 수강 기한",
+                                    "• 알림 설정 및 발송 기록"
                                 ]
                             )
                             
@@ -186,7 +194,16 @@ struct ConsentView: View {
                 }
                 
                 // 계속 버튼
-                Button(action: onContinue) {
+                Button(action: {
+                    // iOS 알림 권한 요청
+                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+                        print("알림 권한: \(granted)")
+                        if let error = error {
+                            print("알림 권한 오류: \(error)")
+                        }
+                    }
+                    onContinue()
+                }) {
                     HStack {
                         Image(systemName: "arrow.right.circle.fill")
                         Text("LMS 로그인 진행")

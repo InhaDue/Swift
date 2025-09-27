@@ -30,7 +30,7 @@ struct OnboardingFlow: View {
             }
         }
         .fullScreenCover(isPresented: $showLoadingScreen) {
-            DataLoadingView(crawler: crawler, username: "", password: "")
+            DataLoadingView(username: "", password: "")
                 .environmentObject(auth)
         }
     }
