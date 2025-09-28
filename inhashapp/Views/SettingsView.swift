@@ -159,13 +159,13 @@ struct SettingsView: View {
         let deleteDataUrl = URL(string: "\(AppConfig.baseURL)/api/crawl/delete/\(studentId)")!
         var deleteDataRequest = URLRequest(url: deleteDataUrl)
         deleteDataRequest.httpMethod = "DELETE"
-        deleteDataRequest.setValue("Bearer \(auth.token ?? "")", forHTTPHeaderField: "Authorization")
+        deleteDataRequest.setValue("Bearer \(auth.token)", forHTTPHeaderField: "Authorization")
         
         // 2. 계정 삭제 API 호출 (서버에 구현 필요)
         let deleteAccountUrl = URL(string: "\(AppConfig.baseURL)/api/auth/delete/\(studentId)")!
         var deleteAccountRequest = URLRequest(url: deleteAccountUrl)
         deleteAccountRequest.httpMethod = "DELETE"
-        deleteAccountRequest.setValue("Bearer \(auth.token ?? "")", forHTTPHeaderField: "Authorization")
+        deleteAccountRequest.setValue("Bearer \(auth.token)", forHTTPHeaderField: "Authorization")
         
         do {
             // 데이터 삭제
@@ -237,9 +237,9 @@ struct LmsReconnectView: View {
                     // LMS 자격 증명 저장
                     if let savedUsername = UserDefaults.standard.string(forKey: "lmsUsername") {
                         lmsUsername = savedUsername
-                    if let savedPassword = KeychainHelper.shared.readString(service: "com.inhash.app", 
-                                                                     account: savedUsername) {
-                        lmsPassword = savedPassword
+                        if let savedPassword = KeychainHelper.shared.readString(service: "com.inhash.app", 
+                                                                                account: savedUsername) {
+                            lmsPassword = savedPassword
                         } else {
                             lmsPassword = "temp_password"
                         }
